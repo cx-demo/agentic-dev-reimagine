@@ -167,9 +167,9 @@ await test("full workflow E2E with call-counting fake GitHub", async () => {
   await coordinator.handleIntent(intent(fake, "answers", { answers: [{ id: "q1", prompt: "Framework?", answer: "Vanilla" }] }));
   o = order(prompts);
   await coordinator.submitStage({ opId: o.opId, submissionToken: o.token, artifact: { body: "Plan: implement a small vanilla component with tests." } });
-  // The plan now goes through the review panel out-of-band before the gate opens.
-  assert.equal(stateOf(fake).pending.kind, "plan-panel");
-  await coordinator.panelSettled();
+  // Submitting the plan runs the panel inline. The factory's subagents only live
+  // as long as the calling turn, so submitStage must not return before they are
+  // done -- by the time it does, the panel has finished and the gate is open.
   assert.equal(stateOf(fake).gate, "plan-review");
 
   await coordinator.handleIntent(intent(fake, "plan-ok", { notes: "" }));

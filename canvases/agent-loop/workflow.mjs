@@ -357,7 +357,8 @@ export function createCoordinator(deps) {
       const detected = await github.detectRepo();
       if (detected.owner !== owner || detected.repo !== repo) throw new Error("selected issue is outside the current workspace repository");
     }
-    return enqueueIssue(`${owner}/${repo}/${issue}`, async () => {
+    const issueKey = `${owner}/${repo}/${issue}`;
+    return awaitingPanel(issueKey, () => enqueueIssue(issueKey, async () => {
       const cur = await read(owner, repo, issue);
       const st = cur.state;
       const data = intent.data || {};
@@ -402,7 +403,7 @@ export function createCoordinator(deps) {
       if (intent.kind === "revise") return revise(owner, repo, issue, cur, data, intent);
       if (intent.kind === "ship") return ship(owner, repo, issue, cur, data, intent);
       throw new Error(`unknown intent kind ${intent.kind}`);
-    });
+    }));
   }
 
   async function approve(owner, repo, issue, cur, data, intent) {
@@ -561,7 +562,11 @@ export function createCoordinator(deps) {
     const repo = input.repo || active?.repo;
     const issue = binding.issue;
     if (!owner || !repo || !issue) throw new Error("unable to resolve issue for submission");
-    return enqueueIssue(`${owner}/${repo}/${issue}`, async () => {
+    const issueKey = `${owner}/${repo}/${issue}`;
+    // Hold the caller's turn open until any panel this submission scheduled has
+    // finished. Returning first lets the turn end underneath the factory, which
+    // stops it before it can spawn a single reviewer.
+    return awaitingPanel(issueKey, () => enqueueIssue(issueKey, async () => {
       const cur = await read(owner, repo, issue);
       const st = cur.state;
       if (!st || !st.pending) return { ok: true, state: st };
@@ -578,7 +583,7 @@ export function createCoordinator(deps) {
       const existing = github.findCommentByOpMarker?.(cur.comments, "AL-OUT", opId);
       if (existing) return continueStage(owner, repo, issue, cur, existing.commentId, existing.payload, existing.body);
       return acceptArtifact(owner, repo, issue, cur, artifact);
-    });
+    }));
   }
 
   function parseOpBinding(opId) {
@@ -666,9 +671,29 @@ export function createCoordinator(deps) {
   // ---- the two-model plan panel -------------------------------------------
 
   const panelJobs = new Set();
+  const panelJobsByIssue = new Map();
   // Lets callers and tests await the out-of-band panel run without polling.
-  async function panelSettled() {
-    while (panelJobs.size) await Promise.all([...panelJobs]);
+  // With a key, waits only on that issue so an unrelated panel cannot block it.
+  async function panelSettled(key) {
+    const pick = () => (key ? panelJobsByIssue.get(key) : panelJobs) || new Set();
+    while (pick().size) await Promise.all([...pick()]);
+  }
+
+  // The queued section returns as soon as the panel is *scheduled*. Awaiting it
+  // here -- outside the queue, so the panel's own writes can still acquire it --
+  // keeps the caller's turn alive for as long as the reviewers need.
+  //
+  // Only jobs this call started are awaited. Waiting on any in-flight panel
+  // would make an unrelated click hang for the length of a review, and would
+  // deadlock outright for a call made from inside a running panel.
+  async function awaitingPanel(key, work) {
+    const before = new Set(panelJobsByIssue.get(key) || []);
+    const out = await work();
+    const current = panelJobsByIssue.get(key);
+    if (!current) return out;
+    const mine = [...current].filter((job) => !before.has(job));
+    if (mine.length) await Promise.all(mine);
+    return out;
   }
 
   function bodyOf(comments, id) {
@@ -684,15 +709,32 @@ export function createCoordinator(deps) {
     return list.map((r) => ({ id: String(r.id), model: String(r.model) }));
   }
 
-  // Runs outside the issue queue on purpose. Failures are surfaced onto the
-  // issue rather than thrown into a caller that has already returned.
+  // Runs outside the issue queue on purpose: the panel writes back through the
+  // same queue, so awaiting it from inside a queued section would deadlock.
+  // Failures are surfaced onto the issue rather than thrown into a caller that
+  // has already returned.
+  //
+  // Scheduling is only half the contract. Factory subagents can only be spawned
+  // while the calling turn is still alive -- a run that begins after the turn
+  // ends is stopped before it spawns anything, and every agent call comes back
+  // null, which the panel can only report as "reviewer returned no review". So
+  // the public entry points await the job below via panelSettled(key) once
+  // their queued section has finished.
   function schedulePanel(owner, repo, issue, opId) {
+    const key = `${owner}/${repo}/${issue}`;
     let resolveJob;
     const job = new Promise((r) => { resolveJob = r; });
     panelJobs.add(job);
+    if (!panelJobsByIssue.has(key)) panelJobsByIssue.set(key, new Set());
+    panelJobsByIssue.get(key).add(job);
+    const forget = () => {
+      panelJobs.delete(job);
+      const forIssue = panelJobsByIssue.get(key);
+      if (forIssue) { forIssue.delete(job); if (!forIssue.size) panelJobsByIssue.delete(key); }
+    };
     const run = () => runPanelJob(owner, repo, issue, opId)
       .catch(async (err) => { try { await panelFailed(owner, repo, issue, opId, err); } catch {} })
-      .finally(() => { panelJobs.delete(job); resolveJob(); });
+      .finally(() => { forget(); resolveJob(); });
     if (deps.schedule) deps.schedule(run); else setTimeout(run, 0);
     return job;
   }

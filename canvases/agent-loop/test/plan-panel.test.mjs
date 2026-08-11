@@ -96,8 +96,9 @@ function panelResultFrom(clauses, extra = {}) {
   };
 }
 
-// The submission must not block on two model calls; the queue has to be free
-// while the panel runs, or nothing else on the issue can proceed.
+// The ISSUE QUEUE must be free while the panel runs, or the panel's own writes
+// deadlock against the submission that started it. Note this is about the queue,
+// not the call: submitStage does wait for the panel (see the test below).
 await test("submitting a plan posts a draft and releases the queue before the panel runs", async () => {
   let started = false;
   let releasedWhileRunning = false;
@@ -363,6 +364,44 @@ await test("a replayed panel job is a no-op once the gate is open", async () => 
   await coordinator.panelSettled();
   assert.equal(runs, 1, "the panel is not re-run for a duplicate submission");
   assert.equal(stateOf(fake).gate, "plan-review");
+});
+
+// The bug this guards: the panel used to be pure fire-and-forget, so submitStage
+// returned, the host turn ended, and the factory run was stopped before it could
+// spawn a single reviewer. Every ctx.agent call then came back null, which the
+// panel could only report as "reviewer returned no review" -- at zero credits and
+// zero subagents, which is what made it look like a model fault for so long.
+// Factory subagents only live as long as the turn that started them.
+await test("submitStage does not resolve until the panel it started has finished", async () => {
+  let panelDone = false;
+  const { coordinator } = await makePlanLoop({
+    runPanel: async (input) => {
+      await new Promise((r) => setTimeout(r, 20));
+      panelDone = true;
+      return panelResultFrom(input.clauses);
+    },
+  });
+  await coordinator.submitStage({ opId: "iss7/planning-finalize/t5", submissionToken: TOKEN, artifact: { body: draft } });
+  assert.equal(panelDone, true, "submitStage returned while the panel was still running");
+});
+
+// A call made while a panel is in flight must not wait on it. Waiting would hang
+// an unrelated click for the length of a review, and deadlock a call made from
+// inside the panel itself.
+await test("an unrelated intent does not block on a panel it did not start", async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { coordinator } = await makePlanLoop({
+    runPanel: async (input) => { await gate; return panelResultFrom(input.clauses); },
+  });
+  const submission = coordinator.submitStage({ opId: "iss7/planning-finalize/t5", submissionToken: TOKEN, artifact: { body: draft } });
+  const probe = await Promise.race([
+    coordinator.handleIntent({ kind: "resume", owner: "o", repo: "r", issue: 7 }).then(() => "free"),
+    new Promise((r) => setTimeout(() => r("blocked"), 150)),
+  ]);
+  assert.equal(probe, "free", "an intent that started no panel must not wait for one");
+  release();
+  await submission;
 });
 
 console.log(`\n${passed} plan-panel assertions passed`);

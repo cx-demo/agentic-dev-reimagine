@@ -16,12 +16,25 @@ export const DEFAULT_REVIEWERS = [
   { id: "openai", model: "gpt-5.6-sol" },
 ];
 
-// Three agents, each able to retry once in schema mode.
+// Three agents, each able to retry once in schema mode is 6 spawns exactly, so
+// the cap is set above that rather than precisely on the worst case.
+//
+// The credit budget is sized from measurement, not intuition. A reviewer pair
+// running the real ~20k-char packet costs about 32 credits, and synthesis is a
+// third call of similar size, so a full panel lands near 50 and a schema retry
+// pushes it higher. The original budget of 12 was under a third of what the
+// reviewers alone need, which exhausted the budget mid-flight: the subagents
+// were stopped and resolved `null`, which the panel could only report as
+// "reviewer returned no review".
+//
+// This ceiling is soft and post-paid, so raising it costs nothing unless the
+// work is actually done, while setting it too low fails the whole panel. The
+// asymmetry argues for real headroom.
 export const DEFAULT_LIMITS = {
   maxConcurrentSubagents: 2,
-  maxTotalSubagents: 6,
+  maxTotalSubagents: 8,
   timeoutSeconds: 900,
-  maxAiCredits: 12,
+  maxAiCredits: 120,
 };
 
 const SEVERITIES = ["high", "medium", "low"];

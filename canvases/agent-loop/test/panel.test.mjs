@@ -2,7 +2,7 @@ import assert from "node:assert";
 import {
   familyOf, assertProviderDiversity, normalizeReviewers, buildPacket,
   validateReview, validateSynthesis, attributeQuotes, runPanel,
-  planPanelFactoryDefinition, DEFAULT_REVIEWERS, FACTORY_NAME,
+  planPanelFactoryDefinition, DEFAULT_REVIEWERS, DEFAULT_LIMITS, FACTORY_NAME,
 } from "../panel.mjs";
 
 let passed = 0;
@@ -240,6 +240,32 @@ await test("the factory definition declares a bounded budget", () => {
 
 await test("a panel without an agent runner refuses to start", async () => {
   await assert.rejects(() => runPanel({}, { clauses }), /requires an agent runner/);
+});
+
+// The budget is the bug that made every review come back empty. Measured cost:
+// the reviewer pair on a real ~20k packet burns ~32 credits, and synthesis is a
+// third call of the same order. The old ceiling of 12 stopped the subagents
+// mid-flight, and a stopped subagent resolves `null` rather than throwing, so
+// the panel could only report "reviewer returned no review".
+await test("the credit budget covers a measured full panel", () => {
+  const measuredReviewerPair = 32;
+  const synthesisEstimate = measuredReviewerPair / 2;
+  const oneSchemaRetry = measuredReviewerPair / 2;
+  const worstCase = measuredReviewerPair + synthesisEstimate + oneSchemaRetry;
+  assert.ok(DEFAULT_LIMITS.maxAiCredits >= worstCase,
+    `maxAiCredits ${DEFAULT_LIMITS.maxAiCredits} must cover the ~${worstCase} credit worst case`);
+});
+
+// Two reviewers and one synthesis agent, each allowed one schema retry, is 6
+// spawns exactly. The old cap of 6 was sufficient but sat precisely on the
+// worst case; 8 is set so adding a reviewer does not silently start truncating.
+await test("the subagent cap covers every retried spawn", () => {
+  const agents = DEFAULT_REVIEWERS.length + 1;
+  const withRetries = agents * 2;
+  assert.ok(DEFAULT_LIMITS.maxTotalSubagents >= withRetries,
+    `maxTotalSubagents ${DEFAULT_LIMITS.maxTotalSubagents} must cover ${withRetries} retried spawns`);
+  assert.ok(DEFAULT_LIMITS.maxConcurrentSubagents >= DEFAULT_REVIEWERS.length,
+    "reviewers are meant to run in parallel");
 });
 
 console.log(`\n${passed} panel assertions passed`);

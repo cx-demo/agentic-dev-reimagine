@@ -58,6 +58,16 @@ await test("a non-completed envelope is treated as a failure", () => {
     "run envelopes resolve for error/halted/cancelled, so status is checked");
 });
 
+// A reached limit is reported as failure.kind. Throwing the bare status turned
+// an exhausted credit budget into an unattributable "error", which is exactly
+// how the null-review bug stayed hidden.
+await test("a failed run reports why it failed, not just that it failed", () => {
+  assert.ok(/failure\s*&&\s*envelope\.failure\.kind|failure\.kind/.test(src),
+    "the envelope's failure kind is surfaced");
+  assert.ok(!/plan panel run \$\{envelope \? envelope\.status/.test(src),
+    "the bare-status message is gone");
+});
+
 // Contract check against the real SDK when this machine has it. Skipped rather
 // than failed elsewhere, since the SDK ships with the host app, not the repo.
 const sdkPath = process.env.COPILOT_SDK_PATH || "/Applications/GitHub Copilot.app/Contents/Resources/copilot-sdk";

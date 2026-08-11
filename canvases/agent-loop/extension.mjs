@@ -92,6 +92,24 @@ session = await joinSession({
   ...(planPanel ? { factories: [planPanel] } : {}),
 });
 
+// A bare status is not diagnosable. A reached limit arrives as `failure.kind`
+// (maxAiCredits, maxTotalSubagents, timeoutSeconds), and dropping it is what
+// turned an exhausted credit budget into a blank "error" that had to be traced
+// by hand. Name the cause, and keep the run id so the run can be resumed with a
+// raised limit instead of restarted.
+function describeFailure(envelope) {
+  const bits = [String(envelope.status || "failed")];
+  const kind = envelope.failure && envelope.failure.kind;
+  if (kind) {
+    const value = envelope.failure.value;
+    bits.push(`- limit ${kind}${value === undefined ? "" : `=${value}`} reached`);
+  } else if (envelope.error) {
+    bits.push(`- ${String(envelope.error).slice(0, 300)}`);
+  }
+  if (envelope.runId) bits.push(`(run ${envelope.runId})`);
+  return bits.join(" ");
+}
+
 // The panel runs as a factory so its subagents get genuinely fresh contexts.
 // A non-completed run is an error here: the coordinator decides whether that
 // degrades or fails, and it must never mistake an empty envelope for a review.
@@ -103,7 +121,7 @@ session = await joinSession({
 async function runPlanPanel(args) {
   const envelope = await session.factory.run(planPanel, { args, limits: DEFAULT_LIMITS });
   if (!envelope || envelope.status !== "completed") {
-    throw new Error(`plan panel run ${envelope ? envelope.status : "failed"}`);
+    throw new Error(`plan panel run ${envelope ? describeFailure(envelope) : "failed"}`);
   }
   const result = envelope.result;
   if (!result || typeof result !== "object") throw new Error("plan panel returned no result");

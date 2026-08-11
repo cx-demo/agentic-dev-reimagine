@@ -344,25 +344,52 @@ export function findCommentByHeading(comments, marker, { newest = false } = {}) 
 //   - [ ] Min/max dates
 //   - [ ] Disabled dates
 // The `qN` id is authoritative. The select tag is optional; when absent it is
-// inferred: `single` when choices are present, else `text`. Numbered/bullet
-// prefixes on the question line (e.g. `1. **q1.** …`) still parse. A free-text
-// note is always allowed alongside choices, so the webview renders one anyway.
+// inferred: `single` when choices are present, else `text`. A free-text note is
+// always allowed alongside choices, so the webview renders one anyway.
+//
+// The heading match is deliberately tolerant, because generating agents reliably
+// drift from the canonical shape and a total parse miss fails the whole stage.
+// These all resolve to the same `q1`:
+//   **q1.** Which framework?      1. **q1.** …      ### **q1.** …
+//   **q1. Which framework?**      q1. …            > **q1)** …
+//   **q1:** …                     **q1** …         \*\*q1\.\* …
+// To stay safe against a stray bullet like `- q1 CSV` being read as a heading,
+// a line must carry EITHER bold markers OR a `.`/`:`/`)` separator to qualify.
 export function parseQuestionnaire(body) {
   if (!body) return [];
-  const qHead = /^\s*(?:\d+\.\s*|[-*]\s*)?\*\*(q\d+)\.\*\*\s*(?:\((single|multi|text)\)\s*)?(.+?)\s*$/i;
+  // Groups: 1=bold-open, 2=id, 3=separator, 4=select tag, 5=prompt.
+  const qHead = /^\s*(?:>\s*)*(?:#{1,6}\s*)?(?:\d+[.)]\s*|[-*+]\s+)?(\*\*|__)?\s*(q\d+)\s*([.):])?\s*(?:\*\*|__)?\s*(?:\((single|multi|text)\)\s*)?(.*?)\s*$/i;
   const bullet = /^\s*[-*]\s+(?:\[[ xX]?\]\s*)?(.+?)\s*$/;
+  // Markdown escaping (`\*\*q1\.\*\*`) survives round-trips through some agents;
+  // unescape the punctuation we key on before matching so it still parses.
+  const unescape = (s) => s.replace(/\\([*_.():[\]])/g, "$1");
+  const lines = String(body).split(/\r?\n/);
   const out = [];
   const seen = new Set();
   let cur = null;
-  for (const raw of String(body).split(/\r?\n/)) {
-    const hm = raw.match(qHead);
-    if (hm) {
-      const id = hm[1].toLowerCase();
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    const hm = unescape(raw).match(qHead);
+    // Bold or an explicit separator is required, so prose and choice bullets
+    // that merely start with `qN` are never promoted to a question heading.
+    if (hm && (hm[1] || hm[3])) {
+      const id = hm[2].toLowerCase();
       // Ignore a duplicate qN block entirely (and detach its bullets) so two
       // questions can never collapse onto one shared answer slot downstream.
       if (seen.has(id)) { cur = null; continue; }
       seen.add(id);
-      cur = { id, select: (hm[2] || "").toLowerCase() || null, prompt: hm[3].trim(), choices: [] };
+      // Whole-line bold (`**q1. Which framework?**`) leaves a dangling closer.
+      let prompt = hm[5].replace(/(\*\*|__)\s*$/, "").trim();
+      // A bare `**q1.**` heading carries its prompt on the next line; adopt it
+      // so the question is not published with an empty prompt.
+      if (!prompt) {
+        const next = lines[i + 1];
+        if (next && next.trim() && !bullet.test(next) && !qHead.test(unescape(next))) {
+          prompt = unescape(next).replace(/(\*\*|__)\s*$/, "").trim();
+          i++;
+        }
+      }
+      cur = { id, select: (hm[4] || "").toLowerCase() || null, prompt, choices: [] };
       out.push(cur);
       continue;
     }

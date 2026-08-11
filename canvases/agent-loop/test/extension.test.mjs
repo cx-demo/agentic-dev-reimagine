@@ -68,6 +68,37 @@ await test("a failed run reports why it failed, not just that it failed", () => 
     "the bare-status message is gone");
 });
 
+// The failure this whole redesign is about: the SDK swallows a refused spawn
+// (`prepareSubagent` throws, the error is discarded, `ctx.agent` resolves null),
+// so a host-side refusal is indistinguishable from a bad review unless the
+// consumed-subagent count is read back. The count is NOT on the run envelope —
+// only on the run detail — so a check against the envelope would silently
+// always be undefined.
+await test("a failed run reads back how many subagents were actually admitted", () => {
+  assert.ok(/getRunDetail\s*\(/.test(src), "the run detail is fetched, since the envelope has no count");
+  assert.ok(/consumed\?\.\s*subagents|consumed\.subagents/.test(src), "the consumed subagent count is read");
+  assert.ok(src.includes('typeof session?.factory?.getRunDetail !== "function"'),
+    "getRunDetail is feature-detected - an older host must degrade, not throw");
+});
+
+await test("zero admitted subagents is attributed to the host, with a code", () => {
+  assert.ok(/spawned\s*===\s*0/.test(src), "the zero-spawn case is distinguished");
+  assert.ok(/the host admitted no subagent/.test(src), "and is stated in the human-facing message");
+  assert.ok(/code\s*=\s*"review-not-started"/.test(src),
+    "callers branch on a code, not on message text");
+});
+
+// Factory args are serialized, so a progress callback cannot ride along in them.
+// The factory body runs in THIS process, so the reporter is resolved out of a
+// side table keyed by opId - which leaks unless it is cleared unconditionally.
+await test("the live progress reporter is registered per run and always cleared", () => {
+  assert.ok(/progressByOp\.set\(/.test(src) && /progressByOp\.delete\(/.test(src),
+    "the reporter is registered and removed");
+  assert.ok(/finally\s*\{[^}]*progressByOp\.delete/.test(src),
+    "removal is in a finally - a thrown run must not leak the callback");
+  assert.ok(/resolveProgress/.test(src), "the factory definition is given a way to resolve it");
+});
+
 // Contract check against the real SDK when this machine has it. Skipped rather
 // than failed elsewhere, since the SDK ships with the host app, not the repo.
 const sdkPath = process.env.COPILOT_SDK_PATH || "/Applications/GitHub Copilot.app/Contents/Resources/copilot-sdk";
@@ -80,6 +111,37 @@ await test("the SDK declares `factory` public and `factories` private", () => {
     "session.factory is the public run surface");
   assert.ok(/private\s+factories\s*;/.test(dts),
     "session.factories is private - reaching for it is the bug this guards");
+});
+
+// The extra RPC hop in spawnCount() only earns its keep if the count is genuinely
+// absent from the run envelope and genuinely present on the detail. Verified live
+// against run 719f1112 (2 subagents) and 5b991b20 (0 subagents, refused spawn);
+// these pin the shape so an SDK change cannot silently return attribution to the
+// "reviewer returned no review" behaviour this redesign exists to remove.
+const rpcDts = join(sdkPath, "generated", "rpc.d.ts");
+const factoryDts = join(sdkPath, "factory.d.ts");
+
+await test("the SDK exposes getRunDetail with a consumed.subagents count", () => {
+  if (!existsSync(rpcDts) || !existsSync(factoryDts)) { console.log("       (skipped - SDK not on this machine)"); return; }
+  assert.ok(/getRunDetail\(runId: string\): Promise<FactoryRunDetail>/.test(readFileSync(factoryDts, "utf8")),
+    "session.factory.getRunDetail is declared");
+  const rpc = readFileSync(rpcDts, "utf8");
+  const detail = rpc.match(/interface FactoryRunDetail \{[\s\S]*?\n\}/);
+  assert.ok(detail, "FactoryRunDetail is declared");
+  assert.ok(/consumed: FactoryRunConsumed;/.test(detail[0]), "the detail carries a consumed block");
+  const consumed = rpc.match(/interface FactoryRunConsumed \{[\s\S]*?\n\}/);
+  assert.ok(consumed && /subagents: number;/.test(consumed[0]),
+    "consumed.subagents is the admitted-subagent count spawnCount reads");
+});
+
+// If the count ever appears here, the extra round trip should be deleted.
+await test("the run envelope still carries no subagent count", () => {
+  if (!existsSync(rpcDts)) { console.log("       (skipped - SDK not on this machine)"); return; }
+  const rpc = readFileSync(rpcDts, "utf8");
+  const envelope = rpc.match(/interface FactoryRunResult \{[\s\S]*?\n\}/);
+  assert.ok(envelope, "FactoryRunResult is declared");
+  assert.ok(!/subagent|consumed/i.test(envelope[0]),
+    "the envelope has no count - which is why getRunDetail is called at all");
 });
 
 console.log(`\n${passed} extension assertions passed`);

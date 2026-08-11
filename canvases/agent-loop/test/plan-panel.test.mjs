@@ -59,7 +59,7 @@ function planState(overrides = {}) {
 }
 
 // Build a coordinator sitting on a pending `plan` submission, with a stub panel.
-async function makePlanLoop({ runPanel, state } = {}) {
+async function makePlanLoop({ runPanel, state, publishSequence } = {}) {
   const fake = new FakeGitHub();
   const prompts = [];
   const coordinator = createCoordinator({
@@ -72,6 +72,7 @@ async function makePlanLoop({ runPanel, state } = {}) {
     readActive: async () => ({ owner: "o", repo: "r", issue: 7 }),
     refresh: async () => {},
     runPanel,
+    publishSequence,
   });
   const st = state || planState();
   await fake.createComment("o", "r", 7, `<!-- AGENT-LOOP-STATE v1 -->\n\`\`\`json\n${JSON.stringify(st, null, 2)}\n\`\`\``);
@@ -86,12 +87,11 @@ function panelResultFrom(clauses, extra = {}) {
     clauses,
     reviews: [
       { reviewerId: "claude", verdict: "revise", strengths: [], risks: [{ severity: "high", clauseId: "c1", evidence: "No retry budget.", recommendation: "Raise it." }], omissions: [], suggestedChanges: [] },
-      { reviewerId: "openai", verdict: "approve", strengths: ["Tight"], risks: [], omissions: [], suggestedChanges: [] },
     ],
     quotes: { c1: [{ reviewerId: "claude", severity: "high", text: "No retry budget." }], c2: [] },
-    disagreements: [{ topic: "Retries", positions: "a vs b", resolution: "Budget six." }],
-    models: [{ id: "claude", model: "claude-sonnet-5", family: "anthropic" }, { id: "openai", model: "gpt-5.6-sol", family: "openai" }],
-    degraded: null,
+    disagreements: [{ topic: "Retries", positions: "reviewer asked for six", resolution: "Four is enough." }],
+    models: [{ id: "claude", model: "claude-sonnet-5", family: "anthropic" }],
+    synthesisModel: "claude-sonnet-5",
     ...extra,
   };
 }
@@ -133,16 +133,17 @@ await test("the panel posts evidence and a final plan, then opens the gate", asy
   const st = stateOf(fake);
   assert.equal(st.gate, "plan-review");
   assert.equal(st.pending, null);
-  assert.ok(findCommentByHeading(fake.comments, "🧑‍⚖️ Panel evidence"), "evidence comment posted");
+  assert.ok(findCommentByHeading(fake.comments, "🧑‍⚖️ Review evidence"), "evidence comment posted");
   const plan = findCommentByHeading(fake.comments, "🗺 Plan", { newest: true });
   assert.ok(plan, "final plan comment posted");
-  assert.match(findCommentByHeading(fake.comments, "🧑‍⚖️ Panel evidence").body, /claude-sonnet-5/, "evidence names the reviewers");
+  assert.match(findCommentByHeading(fake.comments, "🧑‍⚖️ Review evidence").body, /claude-sonnet-5/, "evidence names the reviewer");
   assert.equal(st.panel.disagreements, 1);
   assert.equal(st.artifacts.plan.commentId, plan.commentId);
   assert.equal(st.artifacts.plan.clauses.length, 2);
 });
 
-// The whole point of two models: the second opinion must be visible per clause.
+// An independent opinion is only useful if it lands on the specific clause it
+// was about, so the human is not left diffing prose against prose.
 await test("per-clause quotes reach the gate through deriveState", async () => {
   const { fake, coordinator } = await makePlanLoop({ runPanel: async (i) => panelResultFrom(i.clauses) });
   await coordinator.submitStage({ opId: "iss7/planning-finalize/t5", submissionToken: TOKEN, artifact: { body: draft } });
@@ -153,36 +154,73 @@ await test("per-clause quotes reach the gate through deriveState", async () => {
   assert.equal(view.planClauses[0].title, "Register the factory");
   assert.ok(view.planClauses[0].text.length, "clause text survives the round trip");
   assert.equal(view.panel.quotes.c1[0].reviewerId, "claude");
-  assert.equal(view.panel.models.length, 2);
+  assert.equal(view.panel.models.length, 1);
+  assert.equal(view.panelReviewer.model, "claude-sonnet-5", "the gate can name the reviewer before any run");
 });
 
-await test("one reviewer down still opens the gate, labelled and never silent", async () => {
+// A refused spawn and a bad review are different problems with different fixes,
+// and the old code reported both as "the reviewer returned no review". The gate
+// must carry the distinction, because it decides whether a retry is worth 19
+// credits or is just going to fail the same way again.
+await test("a review that never started is attributed to the host, not the model", async () => {
   const { fake, coordinator } = await makePlanLoop({
-    runPanel: async (i) => panelResultFrom(i.clauses, {
-      degraded: { reason: "reviewer-unavailable", missing: [{ id: "openai", model: "gpt-5.6-sol", error: "timeout" }], survived: ["claude"] },
-    }),
+    runPanel: async () => {
+      const err = new Error("plan review run failed - the host admitted no subagent, so the review never started");
+      err.code = "review-not-started";
+      throw err;
+    },
   });
   await coordinator.submitStage({ opId: "iss7/planning-finalize/t5", submissionToken: TOKEN, artifact: { body: draft } });
   await coordinator.panelSettled();
   const st = stateOf(fake);
-  assert.equal(st.gate, "plan-review", "degradation must not block the human");
-  assert.equal(st.panel.degraded.missing[0].id, "openai");
-  assert.match(st.statusText, /one reviewer was unavailable/i);
-  assert.match(findCommentByHeading(fake.comments, "🗺 Plan", { newest: true }).body, /single-reviewer/);
-  assert.match(findCommentByHeading(fake.comments, "🧑‍⚖️ Panel evidence").body, /Degraded run/);
+  assert.equal(st.gate, "plan-review", "a failed review must not block the human");
+  assert.equal(st.panel.failedCode, "review-not-started");
+  assert.match(findCommentByHeading(fake.comments, "⚠️ Plan review failed").body, /never started/);
+});
+
+// Retrying must not redraft: the human never objected to the draft, only the
+// review failed, and a redraft would re-bill the draft and move the clause ids.
+await test("retrying the review re-runs step 2 against the same draft", async () => {
+  let calls = 0;
+  const { fake, coordinator } = await makePlanLoop({
+    runPanel: async (i) => {
+      calls++;
+      if (calls === 1) throw new Error("reviewer unavailable");
+      return panelResultFrom(i.clauses);
+    },
+  });
+  await coordinator.submitStage({ opId: "iss7/planning-finalize/t5", submissionToken: TOKEN, artifact: { body: draft } });
+  await coordinator.panelSettled();
+  const failedState = stateOf(fake);
+  const draftId = failedState.artifacts.plan.commentId;
+
+  await coordinator.handleIntent({
+    kind: "plan-retry-review", owner: "o", repo: "r", issue: 7,
+    controlCommentId: controlId(fake), expectedTxn: failedState.txn, data: {},
+  });
+  await coordinator.panelSettled();
+
+  const st = stateOf(fake);
+  assert.equal(calls, 2, "the review ran again");
+  assert.equal(st.gate, "plan-review");
+  assert.equal(st.panel.failed, null, "the stale failure is cleared");
+  assert.equal(st.panel.rev, 2, "the retry is a new revision");
+  assert.ok(findCommentByHeading(fake.comments, "🧑‍⚖️ Review evidence"), "the retry produced evidence");
+  assert.notEqual(st.artifacts.plan.commentId, draftId, "the synthesized plan replaces the unreviewed draft");
 });
 
 // Failing closed here would strand the run with no plan at all.
-await test("a total panel failure promotes the unreviewed draft and says so", async () => {
+await test("a total review failure promotes the unreviewed draft and says so", async () => {
   const { fake, coordinator } = await makePlanLoop({
-    runPanel: async () => { throw new Error("both reviewers unavailable"); },
+    runPanel: async () => { throw new Error("reviewer unavailable"); },
   });
   await coordinator.submitStage({ opId: "iss7/planning-finalize/t5", submissionToken: TOKEN, artifact: { body: draft } });
   await coordinator.panelSettled();
   const st = stateOf(fake);
   assert.equal(st.gate, "plan-review");
-  assert.match(st.panel.failed, /both reviewers unavailable/);
-  assert.ok(findCommentByHeading(fake.comments, "⚠️ Plan panel failed"), "the failure is stated on the issue");
+  assert.match(st.panel.failed, /reviewer unavailable/);
+  assert.equal(st.panel.failedCode, "review-failed", "a reviewer that ran and failed is not a spawn refusal");
+  assert.ok(findCommentByHeading(fake.comments, "⚠️ Plan review failed"), "the failure is stated on the issue");
   assert.equal(st.artifacts.plan.commentId, st.artifacts.plan.draftCommentId, "the draft becomes the plan");
 });
 
@@ -194,11 +232,42 @@ await test("a host without factories falls back to the draft and records why", a
   const st = stateOf(fake);
   assert.equal(st.gate, "plan-review", "the loop still works without the panel");
   assert.equal(st.panel.skipped.reason, "factories-unavailable");
-  assert.match(findCommentByHeading(fake.comments, "🧑‍⚖️ Panel evidence").body, /Panel skipped/);
+  assert.match(findCommentByHeading(fake.comments, "🧑‍⚖️ Review evidence").body, /Review skipped/);
 });
 
-// q4: a clause send-back re-runs synthesis only and reuses the stored reviews.
-await test("send-back re-runs synthesis only and reuses the stored reviews", async () => {
+// Live step status is the only thing standing between a stalled run and an
+// unattributed spinner. It is deliberately ephemeral — published to the canvas
+// server's memory, never to the issue — so the test also pins the teardown: a
+// tracker left behind after the run would misreport a finished run as live.
+await test("step progress is published while the run is live and cleared after", async () => {
+  const published = [];
+  const { coordinator } = await makePlanLoop({
+    publishSequence: (key, value) => published.push([key, value && JSON.parse(JSON.stringify(value))]),
+    runPanel: async (i, onProgress) => {
+      onProgress({ step: "review", state: "running", model: "claude-sonnet-5" });
+      onProgress({ step: "review", state: "done", detail: "3 findings" });
+      onProgress({ step: "synthesis", state: "running", model: "claude-sonnet-5" });
+      return panelResultFrom(i.clauses);
+    },
+  });
+  await coordinator.submitStage({ opId: "iss7/planning-finalize/t5", submissionToken: TOKEN, artifact: { body: draft } });
+  await coordinator.panelSettled();
+
+  assert.ok(published.length >= 4, "each step transition is published");
+  assert.deepEqual(published[0][0], "o/r/7", "progress is keyed by issue, not shared globally");
+  assert.equal(published[0][1].steps.draft.state, "done", "the draft is already done when the review starts");
+  assert.equal(published[0][1].steps.review.state, "waiting");
+  const running = published.find(([, v]) => v && v.steps.review.state === "running");
+  assert.equal(running[1].steps.review.model, "claude-sonnet-5", "the running step names its model");
+  assert.ok(running[1].steps.review.startedAt, "a running step is timestamped so elapsed time is real");
+  const doneReview = published.find(([, v]) => v && v.steps.review.state === "done");
+  assert.equal(doneReview[1].steps.review.detail, "3 findings");
+  assert.ok(doneReview[1].steps.review.endedAt);
+  assert.equal(published.at(-1)[1], null, "the tracker is torn down once the outcome is durable");
+});
+
+// q4: a clause send-back re-runs synthesis only and reuses the stored review.
+await test("send-back re-runs synthesis only and reuses the stored review", async () => {
   const calls = [];
   const { fake, coordinator } = await makePlanLoop({
     runPanel: async (i) => { calls.push(i); return panelResultFrom(i.clauses); },
@@ -215,7 +284,7 @@ await test("send-back re-runs synthesis only and reuses the stored reviews", asy
 
   assert.equal(calls.length, 2);
   assert.equal(calls[1].mode, "synthesis-only");
-  assert.equal(calls[1].reviews.length, 2, "the stored reviews are reused, not re-billed");
+  assert.equal(calls[1].reviews.length, 1, "the stored review is reused, not re-billed");
   assert.equal(calls[1].rev, 2);
   assert.deepEqual(calls[1].decisions.map((d) => d.action), ["pin", "send-back"]);
   assert.equal(stateOf(fake).gate, "plan-review");
@@ -259,27 +328,31 @@ await test("plan-steer rejects unknown clauses and no-op submissions", async () 
   await assert.rejects(() => coordinator.handleIntent({ ...ctx, data: { decisions: [{ clauseId: "c1", action: "pin" }] } }), /nothing to re-run/);
 });
 
-// q1: model ids are a canvas setting persisted in the control block.
-await test("panel-config persists reviewers and refuses a same-family pair", async () => {
+// The reviewer used to be configurable through a `panel-config` intent that no
+// UI could reach, so the only thing the setting could actually do was put the
+// review into an invalid state by hand-editing the control block. It is a
+// constant now, and a stale control block must not resurrect the old value.
+await test("the reviewer is a constant and ignores stale control-block config", async () => {
+  let seen = null;
+  const st = planState({ panel: { config: { reviewers: [{ id: "a", model: "gpt-5.6-sol" }, { id: "b", model: "claude-sonnet-5" }] } } });
+  const { coordinator } = await makePlanLoop({ state: st, runPanel: async (i) => { seen = i.reviewer; return panelResultFrom(i.clauses); } });
+  await coordinator.submitStage({ opId: "iss7/planning-finalize/t5", submissionToken: TOKEN, artifact: { body: draft } });
+  await coordinator.panelSettled();
+  assert.deepEqual(seen, { id: "claude", model: "claude-sonnet-5" });
+});
+
+await test("panel-config is no longer a reachable intent", async () => {
   const { fake, coordinator } = await makePlanLoop({ runPanel: async (i) => panelResultFrom(i.clauses) });
   await coordinator.submitStage({ opId: "iss7/planning-finalize/t5", submissionToken: TOKEN, artifact: { body: draft } });
   await coordinator.panelSettled();
-  const ctx = { kind: "panel-config", owner: "o", repo: "r", issue: 7, controlCommentId: controlId(fake), expectedTxn: stateOf(fake).txn };
   await assert.rejects(
-    () => coordinator.handleIntent({ ...ctx, data: { reviewers: [{ id: "a", model: "claude-sonnet-5" }, { id: "b", model: "claude-opus-5" }] } }),
-    /same provider family/,
+    () => coordinator.handleIntent({
+      kind: "panel-config", owner: "o", repo: "r", issue: 7,
+      controlCommentId: controlId(fake), expectedTxn: stateOf(fake).txn,
+      data: { reviewers: [{ id: "a", model: "gpt-5.6-sol" }, { id: "b", model: "claude-sonnet-5" }] },
+    }),
+    /unknown intent kind/,
   );
-  await coordinator.handleIntent({ ...ctx, data: { reviewers: [{ id: "a", model: "gpt-5.6-sol" }, { id: "b", model: "gemini-3.1-pro-preview" }] } });
-  assert.equal(stateOf(fake).panel.config.reviewers[1].model, "gemini-3.1-pro-preview");
-});
-
-await test("the configured reviewers are the ones actually dispatched", async () => {
-  let seen = null;
-  const st = planState({ panel: { config: { reviewers: [{ id: "a", model: "gpt-5.6-sol" }, { id: "b", model: "claude-sonnet-5" }] } } });
-  const { coordinator } = await makePlanLoop({ state: st, runPanel: async (i) => { seen = i.reviewers; return panelResultFrom(i.clauses); } });
-  await coordinator.submitStage({ opId: "iss7/planning-finalize/t5", submissionToken: TOKEN, artifact: { body: draft } });
-  await coordinator.panelSettled();
-  assert.deepEqual(seen.map((r) => r.model), ["gpt-5.6-sol", "claude-sonnet-5"]);
 });
 
 // The panel packet must be built from durable issue state, not a transcript.
@@ -338,7 +411,7 @@ await test("oversized reviews are shed from the control block, not lost", async 
   assert.equal(st.gate, "plan-review", "a large review must not break the gate");
   assert.deepEqual(st.panel.reviews, [], "reviews were shed from the control block");
   assert.ok(st.panel.reviewsCommentId, "and a pointer to them is kept");
-  assert.match(findCommentByHeading(fake.comments, "🧑‍⚖️ Panel evidence").body, /x{500}/, "the full text survives in the comment");
+  assert.match(findCommentByHeading(fake.comments, "🧑‍⚖️ Review evidence").body, /x{500}/, "the full text survives in the comment");
 });
 
 // Clause anchors must survive the workflow sanitizer that mangles `AL-`.

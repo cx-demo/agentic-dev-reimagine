@@ -12,7 +12,7 @@ import { renderHtml } from "./webview.mjs";
 import * as GitHub from "./github.mjs";
 import { getIssue, listComments, getComment, getPull, getPullHead, getPullFiles, findControlBlock, findCommentByHeading, findPrototypeComments, findQuestionnaireComment, findBuildReadyComment } from "./github.mjs";
 import { parseClauses, indexClauses } from "./clauses.mjs";
-import { DEFAULT_REVIEWERS } from "./panel.mjs";
+import { REVIEWER, SYNTHESIS_MODEL } from "./panel.mjs";
 import { buildSnapshot } from "./pr.mjs";
 import { createCoordinator } from "./workflow.mjs";
 
@@ -129,7 +129,8 @@ export async function buildState(target = null) {
       txn: null, pending: null, prototypeRounds: [], prototypeComments: [],
       research: null, questionnaire: null, answers: null, plan: null, impl: null, finalized: null,
       planClauses: [], panel: null, panelAvailable: capabilities().panelAvailable !== false,
-      panelReviewers: DEFAULT_REVIEWERS,
+      panelReviewer: REVIEWER,
+      synthesisModel: SYNTHESIS_MODEL,
       approved: null,
     };
   }
@@ -286,7 +287,8 @@ export function deriveState({ owner, repo, issue, iss, comments, capabilities = 
       planClauses,
       panel,
       panelAvailable: capabilities.panelAvailable !== false,
-      panelReviewers: (panel && panel.config && panel.config.reviewers) || DEFAULT_REVIEWERS,
+      panelReviewer: REVIEWER,
+      synthesisModel: SYNTHESIS_MODEL,
       impl,
       finalized,
       approved: d.approved || null,
@@ -384,9 +386,25 @@ export async function startServer(deps = {}) {
     active = { owner, repo, issue };
     await setActive(owner, repo, issue);
   };
-  const buildBoundState = async () => active
-    ? (deps.buildState || buildState)(active)
-    : { active: false };
+  // Live plan-sequence status, held in memory only. It is merged into /state on
+  // read rather than persisted, because it describes a run that is happening
+  // right now: after the run ends the durable outcome is on the issue and this
+  // would only be a stale copy. Keyed by issue so two canvas instances bound to
+  // different issues cannot show each other's progress.
+  const sequences = new Map();
+  const publishSequence = (key, value) => {
+    if (value) sequences.set(key, value); else sequences.delete(key);
+    if (serverEntry) broadcastRefresh(serverEntry);
+  };
+  const buildBoundState = async () => {
+    if (!active) return { active: false };
+    const st = await (deps.buildState || buildState)(active);
+    const seq = sequences.get(`${active.owner}/${active.repo}/${active.issue}`);
+    // Only while the run it describes is still the pending one — a sequence left
+    // behind by a crashed run must not look live.
+    if (seq && st && st.pending && st.pending.opId === seq.opId) st.sequence = seq;
+    return st;
+  };
   const buildBoundPrSnapshot = async () => active
     ? (deps.buildPrSnapshot || buildPrSnapshot)(active)
     : { available: false, reason: "no-active-issue" };
@@ -460,6 +478,7 @@ export async function startServer(deps = {}) {
     instanceId: deps.instanceId || "agent-loop",
     openPrSession: deps.openPrSession,
     runPanel: deps.runPanel,
+    publishSequence,
     refresh: async () => { if (serverEntry) broadcastRefresh(serverEntry); },
   });
 
@@ -587,6 +606,7 @@ export async function startServer(deps = {}) {
     server, assetServer, clients, url: `http://127.0.0.1:${port}/`, assetBase,
     token, coordinator, readActive: readBoundActive, setActive: setBoundActive,
     buildState: buildBoundState, buildPrSnapshot: buildBoundPrSnapshot,
+    publishSequence,
   };
   return serverEntry;
 }

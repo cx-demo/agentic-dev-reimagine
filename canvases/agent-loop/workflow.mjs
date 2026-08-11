@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { join, normalize, sep } from "node:path";
 import { STATE_SENTINEL, parseControlBlock, hasSentinel, parseQuestionnaire } from "./github.mjs";
 import { normalizeClauses, renderClauses, parseClauses, indexClauses, spliceSynthesis, planStats, CLAUSE_ID_RE } from "./clauses.mjs";
-import { DEFAULT_REVIEWERS, assertProviderDiversity } from "./panel.mjs";
+import { REVIEWER, SYNTHESIS_MODEL } from "./panel.mjs";
 
 export const LABEL_DEFINITIONS = [
   { name: "agent-loop", color: "5319e7", description: "Managed by the Agent Loop canvas" },
@@ -399,7 +399,7 @@ export function createCoordinator(deps) {
       if (intent.kind === "plan-ok") return planOk(owner, repo, issue, cur, data, intent);
       if (intent.kind === "plan-revise") return planRevise(owner, repo, issue, cur, data, intent);
       if (intent.kind === "plan-steer") return planSteer(owner, repo, issue, cur, data, intent);
-      if (intent.kind === "panel-config") return panelConfig(owner, repo, issue, cur, data, intent);
+      if (intent.kind === "plan-retry-review") return planRetryReview(owner, repo, issue, cur, data, intent);
       if (intent.kind === "revise") return revise(owner, repo, issue, cur, data, intent);
       if (intent.kind === "ship") return ship(owner, repo, issue, cur, data, intent);
       throw new Error(`unknown intent kind ${intent.kind}`);
@@ -702,11 +702,12 @@ export function createCoordinator(deps) {
     return c ? String(c.body || "") : "";
   }
 
-  function panelReviewers(st) {
-    const configured = st?.panel?.config?.reviewers;
-    const list = Array.isArray(configured) && configured.length ? configured : DEFAULT_REVIEWERS;
-    assertProviderDiversity(list);
-    return list.map((r) => ({ id: String(r.id), model: String(r.model) }));
+  // The reviewer is a constant, not a setting. It was configurable through a
+  // `panel-config` intent that nothing could reach — no webview control and no
+  // canvas action ever emitted it — so the option existed only as a way to put
+  // the review into an invalid state by hand-editing the control block.
+  function panelReviewer() {
+    return { id: String(REVIEWER.id), model: String(REVIEWER.model) };
   }
 
   // Runs outside the issue queue on purpose: the panel writes back through the
@@ -749,6 +750,8 @@ export function createCoordinator(deps) {
     const clauses = parseClauses(bodyOf(cur.comments, pending.draftCommentId));
     const stored = st.panel?.reviews || [];
     const mode = pending.mode === "synthesis-only" ? "synthesis-only" : "full";
+    const key = `${owner}/${repo}/${issue}`;
+    const reviewer = panelReviewer();
 
     // q9: on by default, no flag, and a silent fallback when the host cannot run
     // subagents. "Silent" means it does not interrupt — it is still recorded.
@@ -759,31 +762,63 @@ export function createCoordinator(deps) {
       });
     }
 
-    const result = await deps.runPanel({
-      owner, repo, issue, opId, mode, rev: Number(pending.rev || 1),
-      reviewers: panelReviewers(st),
-      reviews: stored,
-      clauses,
-      decisions: pending.decisions || [],
-      request: String(cur.iss?.body || ""),
-      research: bodyOf(cur.comments, st.artifacts?.research?.commentId),
-      answers: bodyOf(cur.comments, st.artifacts?.answers?.commentId),
-      feedback: pending.feedback || "",
-      baseBranch: st.baseBranch || "main",
-      branch: branchFor(issue),
-    });
-    return finishPanel(owner, repo, issue, opId, result);
+    // Live step status. Ephemeral by design: it is pushed into the canvas
+    // server's in-memory state, never onto the issue. A GitHub write per step
+    // would cost a round trip each time and burn rate limit to publish
+    // information that is worthless the moment the run ends.
+    const sequence = {
+      opId, mode, rev: Number(pending.rev || 1), startedAt: now(),
+      steps: {
+        draft: { state: "done", detail: `${clauses.length} clause${clauses.length === 1 ? "" : "s"} drafted` },
+        review: mode === "synthesis-only"
+          ? { state: "reused", model: reviewer.model, detail: "Reusing the review from the previous revision." }
+          : { state: "waiting", model: reviewer.model },
+        synthesis: { state: "waiting", model: SYNTHESIS_MODEL },
+      },
+    };
+    const publish = () => { try { deps.publishSequence?.(key, sequence); } catch {} };
+    const onProgress = (ev) => {
+      const stepName = ev && ev.step;
+      const slot = stepName && sequence.steps[stepName];
+      if (!slot) return;
+      if (ev.state === "running" && !slot.startedAt) slot.startedAt = now();
+      if (ev.state === "done" || ev.state === "failed") slot.endedAt = now();
+      slot.state = ev.state || slot.state;
+      if (ev.model) slot.model = ev.model;
+      if (ev.detail) slot.detail = ev.detail;
+      if (ev.code) slot.code = ev.code;
+      publish();
+    };
+    publish();
+
+    try {
+      const result = await deps.runPanel({
+        owner, repo, issue, opId, mode, rev: Number(pending.rev || 1),
+        reviewer,
+        reviews: stored,
+        clauses,
+        decisions: pending.decisions || [],
+        request: String(cur.iss?.body || ""),
+        research: bodyOf(cur.comments, st.artifacts?.research?.commentId),
+        answers: bodyOf(cur.comments, st.artifacts?.answers?.commentId),
+        feedback: pending.feedback || "",
+        baseBranch: st.baseBranch || "main",
+        branch: branchFor(issue),
+      }, onProgress);
+      return await finishPanel(owner, repo, issue, opId, result);
+    } finally {
+      // The durable outcome is on the issue by now; the live tracker would only
+      // go stale.
+      try { deps.publishSequence?.(key, null); } catch {}
+    }
   }
 
-  function renderEvidence(result, reviewers) {
+  function renderEvidence(result, reviewer) {
     const lines = [];
-    const models = (result.models || reviewers || []).map((m) => `\`${m.model}\`${m.family ? ` (${m.family})` : ""}`);
-    lines.push(`Reviewed by ${models.join(" and ") || "the panel"}, each in a fresh context with no prior conversation history.`);
-    if (result.skipped) lines.push(`\n> Panel skipped — ${result.skipped.reason}. The draft plan is shown unreviewed.`);
-    if (result.degraded) {
-      const missing = result.degraded.missing.map((m) => `\`${m.model}\` (${m.error})`).join(", ");
-      lines.push(`\n> ⚠️ Degraded run — ${missing} did not respond. This plan was reviewed by ${result.degraded.survived.join(", ")} only.`);
-    }
+    const models = (result.models || (reviewer ? [reviewer] : [])).map((m) => `\`${m.model}\`${m.family ? ` (${m.family})` : ""}`);
+    lines.push(`Reviewed by ${models.join(" and ") || "the reviewer"}, in a fresh context with no prior conversation history.`);
+    if (result.synthesisModel) lines.push(`Synthesized by \`${result.synthesisModel}\`, also in a fresh context.`);
+    if (result.skipped) lines.push(`\n> Review skipped — ${result.skipped.reason}. The draft plan is shown unreviewed.`);
     for (const review of result.reviews || []) {
       lines.push(`\n### ${review.reviewerId} — ${review.verdict}`);
       if (review.strengths?.length) lines.push(`**Strengths**\n${review.strengths.map((s) => `- ${s}`).join("\n")}`);
@@ -793,8 +828,8 @@ export function createCoordinator(deps) {
       if (review.omissions?.length) lines.push(`**Omissions**\n${review.omissions.map((s) => `- ${s}`).join("\n")}`);
     }
     if (result.disagreements?.length) {
-      lines.push(`\n### Disagreements`);
-      lines.push(result.disagreements.map((d) => `- **${d.topic}** — ${d.positions || "positions differed"} → _${d.resolution}_`).join("\n"));
+      lines.push(`\n### Findings the synthesis rejected`);
+      lines.push(result.disagreements.map((d) => `- **${d.topic}** — ${d.positions || "position"} → _${d.resolution}_`).join("\n"));
     }
     return lines.join("\n");
   }
@@ -819,15 +854,15 @@ export function createCoordinator(deps) {
       });
 
       const rev = Number(pending.rev || 1);
-      const evidenceBody = renderEvidence(result, panelReviewers(st));
+      const evidenceBody = renderEvidence(result, panelReviewer());
       const evId = (await github.createComment(owner, repo, issue, renderSys({
-        heading: `🧑‍⚖️ Panel evidence — rev ${rev}`, body: evidenceBody,
-        opId: `${opId}/evidence/${rev}`, payload: { rev, degraded: !!result.degraded, skipped: !!result.skipped },
+        heading: `🧑‍⚖️ Review evidence — rev ${rev}`, body: evidenceBody,
+        opId: `${opId}/evidence/${rev}`, payload: { rev, skipped: !!result.skipped },
       }))).id;
 
       const planBody = renderClauses(finalClauses);
       const planId = (await github.createComment(owner, repo, issue, renderOut({
-        heading: `🗺 Plan${result.degraded ? " (single-reviewer)" : ""}`, body: planBody,
+        heading: "🗺 Plan", body: planBody,
         opId: `${opId}/plan/${rev}`, payload: { kind: "plan", rev },
       }))).id;
 
@@ -836,7 +871,7 @@ export function createCoordinator(deps) {
         stage: "planning",
         gate: "plan-review",
         status: "waiting",
-        statusText: result.degraded ? "Waiting for your approval — one reviewer was unavailable." : "Waiting for your plan approval.",
+        statusText: "Waiting for your plan approval.",
         pending: null,
         txn: Number(st.txn || 0) + 1,
         updatedAt: now(),
@@ -852,7 +887,9 @@ export function createCoordinator(deps) {
         rev,
         evidenceCommentId: evId,
         models: result.models || [],
-        degraded: result.degraded || null,
+        synthesisModel: result.synthesisModel || null,
+        failed: null,
+        failedCode: null,
         skipped: result.skipped || null,
         disagreements: (result.disagreements || []).length,
         quotes: result.quotes || {},
@@ -876,20 +913,28 @@ export function createCoordinator(deps) {
       const st = cur.state;
       if (!st?.pending || st.pending.kind !== "plan-panel" || st.pending.opId !== opId) return { ok: true, state: st };
       const why = err && err.message ? err.message : String(err);
+      // Attribution matters more than the message. "review-not-started" means the
+      // host refused to admit the subagent — retrying is worth a try. Anything
+      // else means the reviewer ran and produced something unusable, where a
+      // retry mostly buys another 19 credits of the same answer.
+      const code = err && err.code === "review-not-started" ? "review-not-started" : "review-failed";
+      const cause = code === "review-not-started"
+        ? "The reviewer was never started — the host did not admit a subagent for it."
+        : `The review could not complete: ${why}`;
       await github.createComment(owner, repo, issue, renderSys({
-        heading: "⚠️ Plan panel failed", body: `The review panel could not complete: ${why}\n\nThe draft plan is shown unreviewed so you can still steer it.`,
-        opId: `${opId}/panel-failed`, payload: { error: why },
+        heading: "⚠️ Plan review failed", body: `${cause}\n\nDetail: \`${why}\`\n\nThe draft plan is shown unreviewed so you can still steer it.`,
+        opId: `${opId}/panel-failed`, payload: { error: why, code },
       }));
       // Failing closed here would strand the run with no plan to act on, so the
       // unreviewed draft is promoted and the failure is stated plainly.
       const draft = parseClauses(bodyOf(cur.comments, st.pending.draftCommentId));
       const next = {
         ...clone(st), stage: "planning", gate: "plan-review", status: "waiting",
-        statusText: "Waiting for your approval — the review panel failed.",
+        statusText: "Waiting for your approval — the plan was not reviewed.",
         pending: null, txn: Number(st.txn || 0) + 1, updatedAt: now(),
       };
       next.artifacts = { ...(next.artifacts || {}), plan: { ...(next.artifacts?.plan || {}), commentId: st.pending.draftCommentId, approved: null, clauses: indexClauses(draft) } };
-      next.panel = { ...(st.panel || {}), failed: why, rev: Number(st.pending.rev || 1) };
+      next.panel = { ...(st.panel || {}), failed: why, failedCode: code, rev: Number(st.pending.rev || 1) };
       await commit(owner, repo, issue, cur.controlCommentId, next);
       await refresh();
       return { ok: true, state: next };
@@ -925,7 +970,7 @@ export function createCoordinator(deps) {
     };
     const next = {
       ...clone(st), stage: "planning", gate: null, status: "working",
-      statusText: `Re-synthesizing with your instructions (reviews from rev ${st.panel?.rev || 1})…`,
+      statusText: `Re-synthesizing with your instructions (review from rev ${st.panel?.rev || 1})…`,
       pending, txn: newTxn, updatedAt: now(),
     };
     await commit(owner, repo, issue, cur.controlCommentId, next);
@@ -934,22 +979,31 @@ export function createCoordinator(deps) {
     return { ok: true, state: next };
   }
 
-  // Model ids are a canvas setting persisted in the control block (q1).
-  async function panelConfig(owner, repo, issue, cur, data, intent) {
-    validateRoute(cur, intent);
+  // Retry the review against the EXISTING draft. A failed review used to leave
+  // "Request changes" as the only way forward, which redrafts the plan and pays
+  // for a draft the human never objected to. This re-runs step 2 only.
+  async function planRetryReview(owner, repo, issue, cur, data, intent) {
+    validateIntent(cur, intent, "plan-review");
     const st = cur.state;
-    const reviewers = (Array.isArray(data.reviewers) ? data.reviewers : []).map((r) => ({
-      id: String(r.id || "").trim().slice(0, 40),
-      model: String(r.model || "").trim().slice(0, 80),
-    }));
-    assertProviderDiversity(reviewers);
+    const draftCommentId = st.artifacts?.plan?.commentId || st.artifacts?.plan?.draftCommentId;
+    if (!draftCommentId) throw new Error("no draft plan to review");
+    const newTxn = Number(st.txn || 0) + 1;
+    const opId = opTxn(issue, "plan-retry-review", newTxn);
+    const rev = Number(st.panel?.rev || 1) + 1;
+    const pending = {
+      opId, kind: "plan-panel", phase: "panel", mode: "full", rev,
+      draftCommentId, decisions: [], inputCommentIds: [], attempt: 1,
+    };
     const next = {
-      ...clone(st),
-      panel: { ...(st.panel || {}), config: { reviewers, updatedAt: now() } },
-      txn: Number(st.txn || 0) + 1, updatedAt: now(),
+      ...clone(st), stage: "planning", gate: null, status: "working",
+      statusText: `Reviewing the plan with ${REVIEWER.model}…`,
+      // The previous reviews are dropped: they are the ones that failed.
+      panel: { ...(st.panel || {}), failed: null, failedCode: null, reviews: [] },
+      pending, txn: newTxn, updatedAt: now(),
     };
     await commit(owner, repo, issue, cur.controlCommentId, next);
     await refresh();
+    schedulePanel(owner, repo, issue, opId);
     return { ok: true, state: next };
   }
 
@@ -998,7 +1052,7 @@ export function createCoordinator(deps) {
         stage: "planning",
         gate: null,
         status: "working",
-        statusText: "Two models are reviewing the plan…",
+        statusText: `Reviewing the plan with ${REVIEWER.model}…`,
         pending: { opId: pending.opId, kind: "plan-panel", phase: "panel", mode: "full", rev, draftCommentId: commentId, attempt: 1 },
         txn: Number(st.txn || 0) + 1,
         updatedAt: now(),

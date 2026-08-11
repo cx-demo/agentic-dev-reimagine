@@ -135,6 +135,40 @@ export function renderHtml(token = "", assetBase = "", initialMode = "") {
   .prov-warn { width: 100%; color: var(--warning-text); font-weight: 600; }
   .prov-fresh { color: var(--text-muted); }
 
+  /* Plan sequence tracker: draft → review → synthesis. The three steps are shown
+     even before they run, so a stall is visibly a stall at a named step rather
+     than an unattributed spinner. */
+  .seq { display: flex; flex-direction: column; gap: 0; margin: 16px 0 2px;
+    border: 1px solid var(--border); border-radius: var(--radius-compact); padding: 0 14px; }
+  .seq-step { display: grid; grid-template-columns: 26px 1fr auto; gap: 12px;
+    align-items: start; padding: 12px 0; }
+  .seq-step + .seq-step { border-top: 1px solid var(--border); }
+  .seq-dot { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text-muted);
+    font-size: 11px; font-weight: 700; font-family: var(--mono); flex-shrink: 0; }
+  /* --sage is a single lime for both modes while --sage-text/-tint are remapped
+     to mint per mode, so the border tracks the text token rather than the raw
+     hue, or the ring reads as a different green from its own fill. */
+  .seq-step[data-state="done"] .seq-dot,
+  .seq-step[data-state="reused"] .seq-dot { border-color: var(--sage-text); color: var(--sage-text); background: var(--sage-tint); }
+  .seq-step[data-state="running"] .seq-dot { border-color: var(--coral); color: var(--coral-text); background: var(--coral-tint); }
+  .seq-step[data-state="failed"] .seq-dot { border-color: var(--warning-text); color: var(--warning-text); }
+  .seq-step[data-state="waiting"] { opacity: .5; }
+  .seq-main { min-width: 0; }
+  .seq-title { font-size: 13.5px; font-weight: 700; color: var(--text); }
+  .seq-sub { font-size: 12px; color: var(--text-muted); margin-top: 3px; line-height: 1.55; }
+  .seq-side { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .seq-model { font-family: var(--mono); font-size: 11px; padding: 2px 7px;
+    border: 1px solid var(--border); border-radius: var(--radius-pill);
+    color: var(--text-muted); white-space: nowrap; }
+  .seq-step[data-state="running"] .seq-model { border-color: var(--coral); color: var(--coral-text); }
+  .seq-time { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .seq-bar { height: 3px; border-radius: 3px; background: var(--border); overflow: hidden; margin-top: 8px; }
+  .seq-bar > i { display: block; height: 100%; width: 38%; background: var(--coral);
+    animation: seqslide 1.5s ease-in-out infinite; }
+  @keyframes seqslide { 0% { margin-left: -38%; } 100% { margin-left: 100%; } }
+  @media (prefers-reduced-motion: reduce) { .seq-bar > i { animation: none; width: 100%; opacity: .5; } }
+
   .clauses { margin-top: 18px; display: flex; flex-direction: column; gap: 10px; }
   .clause { border: 1px solid var(--border); border-radius: var(--radius-compact);
     padding: 12px 14px; background: var(--surface); transition: border-color var(--ease); }
@@ -727,6 +761,7 @@ function renderWorking(s) {
     panelHead(currentKey(s) === "research" ? "research" : "prototype", "Working · round " + esc(s.round || 1), title) +
     (s.issueUrl ? '<p class="sub">Issue <a class="issue-link" href="#" data-ext="' + esc(s.issueUrl) + '">#' + esc(s.issue) + svg("external") + '</a></p>' : '') +
     '<div class="status-line" role="status" aria-live="polite"><span class="spinner"></span>' + esc(s.statusText || "Working…") + '</div>' +
+    renderSequence(s.sequence) +
     recoverBlock +
     brief +
     '</div>';
@@ -1128,30 +1163,110 @@ function paintQuestionStep(s, questions, focusStep, focusChoice) {
   };
 }
 
+// ---- Plan sequence tracker ---------------------------------------------------
+// The plan stage runs three named steps in order: draft → review → synthesis.
+// Rendering all three up front (including the ones that have not started) is the
+// point: when a run dies, the human can see WHICH step died instead of being
+// handed a generic "the panel failed". The data behind this is ephemeral — it
+// lives in the canvas server's memory, never on the issue — so it simply
+// disappears once the run finishes and the durable evidence takes over.
+const SEQ_STEPS = [
+  ["draft", "Draft plan", "Turns the research, prototype notes and your answers into numbered clauses."],
+  ["review", "Independent review", "A fresh context reads only the evidence packet — no conversation history, no draft author."],
+  ["synthesis", "Synthesis", "Merges the review into the draft, then hands you the result."],
+];
+
+function fmtDur(ms) {
+  if (!(ms >= 0)) return "";
+  if (ms < 1000) return Math.round(ms) + "ms";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + "s";
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+}
+
+function seqElapsed(step) {
+  if (!step || !step.startedAt) return "";
+  const end = step.endedAt ? Date.parse(step.endedAt) : Date.now();
+  const start = Date.parse(step.startedAt);
+  return Number.isFinite(start) && Number.isFinite(end) ? fmtDur(end - start) : "";
+}
+
+function renderSequence(seq) {
+  if (!seq || !seq.steps) return "";
+  const glyph = { done: "✓", reused: "✓", running: "●", failed: "!" };
+  return '<div class="seq" role="list">' + SEQ_STEPS.map(([key, title, blurb], i) => {
+    const step = seq.steps[key] || {};
+    const state = step.state || "waiting";
+    const time = seqElapsed(step);
+    const side = [];
+    if (step.model) side.push('<span class="seq-model">' + esc(step.model) + '</span>');
+    if (time) side.push('<span class="seq-time">' + esc(time) + '</span>');
+    return '<div class="seq-step" role="listitem" data-state="' + esc(state) + '">' +
+      '<span class="seq-dot" aria-hidden="true">' + (glyph[state] || String(i + 1)) + '</span>' +
+      '<div class="seq-main">' +
+        '<div class="seq-title">' + esc(title) + '</div>' +
+        '<div class="seq-sub">' + esc(step.detail || blurb) + '</div>' +
+        (state === "running" ? '<div class="seq-bar"><i></i></div>' : "") +
+      '</div>' +
+      '<div class="seq-side">' + side.join("") + '</div>' +
+      '</div>';
+  }).join("") + '</div>';
+}
+
+// The gate is reached after the run has ended, so the live tracker is already
+// gone. Rebuild the same three steps from the durable panel record: the human
+// should see the same shape of thing before and after, and a review that failed
+// stays visible at the gate instead of being reduced to a one-line warning.
+function sequenceFromPanel(s) {
+  const p = s.panel || {};
+  if (!p.rev && !p.failed && !p.skipped) return null;
+  const clauses = Array.isArray(s.planClauses) ? s.planClauses.length : 0;
+  const reviewer = (Array.isArray(p.models) && p.models[0]) || s.panelReviewer || {};
+  const findings = (p.reviews || []).reduce((n, r) => n + ((r.risks || []).length + (r.omissions || []).length), 0);
+  const reviewed = !p.failed && !p.skipped;
+  const review = reviewed
+    ? { state: "done", model: reviewer.model, detail: findings ? findings + " finding" + (findings === 1 ? "" : "s") + " raised." : "No blocking findings." }
+    : { state: "failed", model: reviewer.model,
+        detail: p.failedCode === "review-not-started"
+          ? "The host admitted no subagent, so the reviewer never ran."
+          : p.skipped ? "Reviews are unavailable on this host." : String(p.failed || "The review did not complete.") };
+  return { steps: {
+    draft: { state: "done", detail: clauses ? clauses + " clause" + (clauses === 1 ? "" : "s") + " drafted." : "Draft plan posted." },
+    review,
+    synthesis: reviewed
+      ? { state: "done", model: p.synthesisModel || reviewer.model, detail: p.disagreements ? p.disagreements + " finding" + (p.disagreements === 1 ? "" : "s") + " rejected with a recorded reason." : "Review applied to the draft." }
+      : { state: "waiting", detail: "Skipped — there was nothing to synthesize." },
+  } };
+}
+
 // ---- Plan-review gate --------------------------------------------------------
 // The human steers at the OUTPUT level: every clause can be pinned (frozen
 // byte-for-byte), sent back with an instruction, or dropped. A send-back re-runs
-// synthesis only — the two reviews are reused, not re-billed.
+// synthesis only — the review is reused, not re-billed.
 function renderProvenance(s) {
   const p = s.panel || {};
-  const models = Array.isArray(p.models) && p.models.length ? p.models : (s.panelReviewers || []);
+  const reviewer = s.panelReviewer ? [s.panelReviewer] : [];
+  const models = Array.isArray(p.models) && p.models.length ? p.models : reviewer;
   const bits = [];
   if (models.length) {
     bits.push('<span class="prov-models">' + svg("gate") +
       models.map((m) => '<code>' + esc(m.model || m.id) + '</code>').join('<span class="sep">+</span>') +
       '</span>');
-    bits.push('<span class="prov-fresh">fresh contexts · no prior history</span>');
+    bits.push('<span class="prov-fresh">fresh context · no prior history</span>');
   }
+  if (p.synthesisModel) bits.push('<span class="prov-fresh">synthesis <code>' + esc(p.synthesisModel) + '</code></span>');
   if (p.rev) bits.push('<span class="prov-fresh">rev ' + esc(p.rev) + '</span>');
-  if (p.disagreements) bits.push('<span class="prov-fresh">' + esc(p.disagreements) + ' disagreement' + (p.disagreements === 1 ? '' : 's') + ' resolved</span>');
-  if (p.evidenceCommentId) bits.push('<button class="chip" id="evidenceBtn" aria-expanded="false">Full reviews</button>');
-  // Degradation never blocks the human, but it is never hidden from them either.
-  if (p.degraded) {
-    const missing = (p.degraded.missing || []).map((m) => esc(m.model || m.id)).join(", ");
-    bits.push('<span class="prov-warn">⚠ Single-reviewer plan — ' + missing + ' did not respond.</span>');
+  if (p.disagreements) bits.push('<span class="prov-fresh">' + esc(p.disagreements) + ' finding' + (p.disagreements === 1 ? '' : 's') + ' rejected</span>');
+  if (p.evidenceCommentId) bits.push('<button class="chip" id="evidenceBtn" aria-expanded="false">Full review</button>');
+  // With one reviewer there is no quorum to hide behind: an unreviewed plan is
+  // stated as such rather than shaded as "degraded".
+  if (p.failed) {
+    bits.push('<span class="prov-warn">⚠ ' + esc(p.failedCode === "review-not-started"
+      ? "The reviewer never started — the host did not admit a subagent for it."
+      : "The review failed (" + p.failed + ").") +
+      ' This is the unreviewed draft.</span>');
   }
-  if (p.failed) bits.push('<span class="prov-warn">⚠ The review panel failed (' + esc(p.failed) + '). This is the unreviewed draft.</span>');
-  if (p.skipped) bits.push('<span class="prov-warn">⚠ Plan panel unavailable — this draft was not reviewed.</span>');
+  if (p.skipped) bits.push('<span class="prov-warn">⚠ Review unavailable — this draft was not reviewed.</span>');
   if (!bits.length) return "";
   return '<div class="prov">' + bits.join("") + '</div>' +
     (p.evidenceCommentId ? '<div class="brief" id="evidenceBrief" hidden></div>' : "");
@@ -1191,9 +1306,23 @@ function renderPlanReview(s, readOnly) {
   const hasPlan = s.plan && s.plan.commentId;
   const clauses = Array.isArray(s.planClauses) ? s.planClauses : [];
   const quotes = (s.panel && s.panel.quotes) || {};
+  const failed = !!(s.panel && s.panel.failed);
+
+  // A review that never happened gets its own decision point, ahead of the
+  // clause gate. Retrying re-runs step 2 against this same draft (no redraft);
+  // continuing is allowed, but only as a deliberate act rather than the default.
+  const retryBlock = gated && failed
+    ? '<div class="decision" id="reviewRetry">' +
+        '<div class="row">' +
+          '<button class="btn btn-primary" id="retryReviewBtn"' + (locked ? " disabled" : "") + '>Retry review</button>' +
+          '<button class="btn btn-secondary" id="continueUnreviewedBtn"' + (locked ? " disabled" : "") + '>Continue unreviewed</button>' +
+        '</div>' +
+        '<p class="hint">Retrying reviews the draft above again — it does not rewrite it.</p>' +
+        '</div>'
+    : "";
 
   const controls = gated
-    ? '<div class="decision">' +
+    ? '<div class="decision"' + (retryBlock ? ' id="planDecision" hidden' : '') + '>' +
         '<div class="clause-counts" id="clauseCounts"></div>' +
         '<label class="field" for="planFb">Whole-plan changes — optional when approving, required when requesting a full re-review.</label>' +
         '<textarea class="textarea" id="planFb" placeholder="e.g. Split step 3 into migration + backfill, and call out the rollback path"' +
@@ -1211,13 +1340,28 @@ function renderPlanReview(s, readOnly) {
     '<div class="card">' + head + banner +
     panelHead("plan", "Planning · plan review", s.title || "Implementation plan") +
     (s.issueUrl ? '<p class="sub">Issue <a class="issue-link" href="#" data-ext="' + esc(s.issueUrl) + '">#' + esc(s.issue) + svg("external") + '</a></p>' : '') +
+    renderSequence(sequenceFromPanel(s)) +
     renderProvenance(s) +
     (clauses.length ? renderClauseList(clauses, quotes, locked || !gated)
       : hasPlan ? '<div class="brief" id="planBrief"><span class="muted">Loading the plan…</span></div>'
       : '<p class="muted" style="margin-top:16px">No plan artifact yet.</p>') +
-    controls + '</div>';
+    retryBlock + controls + '</div>';
 
   if (readOnly) wireBack();
+
+  const retryBtn = $("retryReviewBtn");
+  if (retryBtn) retryBtn.onclick = async () => {
+    retryBtn.disabled = true;
+    const ok = await sendIntent("plan-retry-review", {}, ctxFor(s));
+    if (ok) toast("Retrying the review on this draft…");
+    else retryBtn.disabled = false;
+  };
+  const contBtn = $("continueUnreviewedBtn");
+  if (contBtn) contBtn.onclick = () => {
+    const block = $("reviewRetry"); if (block) block.hidden = true;
+    const dec = $("planDecision"); if (dec) dec.hidden = false;
+    const fb = $("planFb"); if (fb) fb.focus();
+  };
 
   const evBtn = $("evidenceBtn");
   if (evBtn) evBtn.onclick = () => {
@@ -1227,7 +1371,7 @@ function renderPlanReview(s, readOnly) {
     box.hidden = open;
     if (!open && !box.dataset.loaded) {
       box.dataset.loaded = "1";
-      box.innerHTML = '<span class="muted">Loading the reviews…</span>';
+      box.innerHTML = '<span class="muted">Loading the review…</span>';
       loadComment(s.panel.evidenceCommentId, "evidenceBrief");
     }
   };

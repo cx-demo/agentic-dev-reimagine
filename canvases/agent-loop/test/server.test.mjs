@@ -185,6 +185,42 @@ try {
 }
 
 // Each server is permanently bound to its own issue even when another canvas
+// Live plan-step progress is served from memory, so /state is where the webview
+// sees it. Two guards matter: it must be scoped to the bound issue, and it must
+// only attach while it still describes the run that is actually pending —
+// otherwise a tracker left over from a crashed run reads as a live one.
+{
+  const seqState = async (t) => ({ active: true, ...t, pending: { opId: "op-1", kind: "plan-panel" } });
+  const canvas = await startServer({
+    active: { owner: "o", repo: "r", issue: 7 }, buildState: seqState,
+    coordinator: { handleIntent: async () => ({ ok: true }) },
+  });
+  try {
+    const b = canvas.url.replace(/\/$/, "");
+    ok("no sequence is served before a run starts", (await req(b, "/state", { token: canvas.token })).json.sequence === undefined);
+
+    canvas.publishSequence("o/r/7", { opId: "op-1", steps: { review: { state: "running", model: "claude-sonnet-5" } } });
+    const live = await req(b, "/state", { token: canvas.token });
+    ok("live step progress reaches /state", live.json.sequence?.steps?.review?.state === "running");
+
+    canvas.publishSequence("o/r/7", { opId: "op-stale", steps: { review: { state: "running" } } });
+    ok("progress from another operation is not shown as live",
+      (await req(b, "/state", { token: canvas.token })).json.sequence === undefined);
+
+    canvas.publishSequence("o/r/8", { opId: "op-1", steps: { review: { state: "running" } } });
+    ok("progress for another issue never leaks into this canvas",
+      (await req(b, "/state", { token: canvas.token })).json.sequence === undefined);
+
+    canvas.publishSequence("o/r/7", { opId: "op-1", steps: { review: { state: "done" } } });
+    canvas.publishSequence("o/r/7", null);
+    ok("clearing the tracker removes it from /state",
+      (await req(b, "/state", { token: canvas.token })).json.sequence === undefined);
+  } finally {
+    canvas.server.close();
+    canvas.assetServer.close();
+  }
+}
+
 // instance updates the compatibility pointer. New servers always start unbound.
 const stateFor = async (target) => target ? { active: true, ...target } : { active: false };
 let bindingBackup = null;

@@ -430,6 +430,67 @@ assert("plan-review Approve enables after plan loads", p.el("planOkBtn").disable
 await p.el("planOkBtn").onclick();
 assert("plan-review Approve POSTs plan-ok", p.posts.some((x) => x.url === "/intent" && x.body.kind === "plan-ok"));
 
+// --- Plan sequence tracker + the failed-review decision point ----------------
+// A run in flight must name the step it is on. The old UI showed a bare spinner,
+// which is exactly why a run that died at step 2 looked identical to one that
+// was simply slow.
+let seq = run({ ...base, stage: "planning", gate: null, status: "working",
+  statusText: "Reviewing the plan\u2026",
+  pending: { opId: "op-1", kind: "plan-panel" },
+  sequence: { opId: "op-1", steps: {
+    draft: { state: "done", detail: "9 clauses drafted." },
+    review: { state: "running", model: "claude-sonnet-5", startedAt: new Date(Date.now() - 41000).toISOString() },
+    synthesis: { state: "waiting", model: "claude-sonnet-5" },
+  } } });
+let seqHtml = seq.el("panel")._html;
+assert("a live run renders all three steps", (seqHtml.match(/class="seq-step"/g) || []).length === 3);
+assert("the running step is marked running", /data-state="running"/.test(seqHtml));
+assert("the running step names its model", /class="seq-model">claude-sonnet-5</.test(seqHtml));
+assert("the running step shows elapsed time", /class="seq-time">41s</.test(seqHtml));
+assert("only the running step gets a progress bar", (seqHtml.match(/class="seq-bar"/g) || []).length === 1);
+assert("steps that have not run are dimmed as waiting", /data-state="waiting"/.test(seqHtml));
+
+// A review that never happened gets its own decision point ahead of the clause
+// gate, so approving an unreviewed plan is a deliberate act rather than the
+// path of least resistance.
+p = run({ ...base, stage: "planning-finalize", gate: "plan-review", status: "waiting",
+  plan: { commentId: 11, approved: null },
+  planClauses: [{ id: "c1", title: "Do it", text: "Carefully." }],
+  panelReviewer: { id: "claude", model: "claude-sonnet-5" },
+  panel: { rev: 1, failed: "plan review run failed", failedCode: "review-not-started" } });
+let failHtml = p.el("panel")._html;
+assert("a failed review offers a retry", /id="retryReviewBtn"/.test(failHtml));
+assert("a failed review offers an explicit unreviewed path", /id="continueUnreviewedBtn"/.test(failHtml));
+assert("the approve controls start hidden behind that choice", /id="planDecision" hidden/.test(failHtml));
+assert("a spawn refusal is attributed to the host, not the model", /never started/.test(failHtml));
+assert("the failed step is shown as failed in the tracker", /data-state="failed"/.test(failHtml));
+await p.el("retryReviewBtn").onclick();
+assert("Retry review POSTs plan-retry-review",
+  p.posts.some((x) => x.url === "/intent" && x.body.kind === "plan-retry-review"));
+
+p = run({ ...base, stage: "planning-finalize", gate: "plan-review", status: "waiting",
+  plan: { commentId: 11, approved: null },
+  planClauses: [{ id: "c1", title: "Do it", text: "Carefully." }],
+  panel: { rev: 1, failed: "reviewer unavailable", failedCode: "review-failed" } });
+p.el("continueUnreviewedBtn").onclick();
+assert("continuing unreviewed reveals the approve controls", p.el("planDecision").hidden === false);
+assert("continuing unreviewed retires the retry block", p.el("reviewRetry").hidden === true);
+
+// A successful run reaches the gate with the tracker rebuilt from durable state,
+// so the human sees the same shape of thing before and after the run.
+p = run({ ...base, stage: "planning-finalize", gate: "plan-review", status: "waiting",
+  plan: { commentId: 11, approved: null },
+  planClauses: [{ id: "c1", title: "Do it", text: "Carefully." }],
+  panel: { rev: 2, synthesisModel: "claude-sonnet-5", disagreements: 1,
+    models: [{ id: "claude", model: "claude-sonnet-5", family: "anthropic" }],
+    reviews: [{ reviewerId: "claude", verdict: "revise", risks: [{ severity: "high", evidence: "e", recommendation: "r" }], omissions: [] }] } });
+let okHtml = p.el("panel")._html;
+assert("the gate shows no retry block after a clean run", !/id="retryReviewBtn"/.test(okHtml));
+assert("the gate rebuilds the three steps from durable state", (okHtml.match(/class="seq-step"/g) || []).length === 3);
+assert("no step is left running once the run has ended", !/data-state="running"/.test(okHtml));
+assert("provenance names one reviewer, not a panel", /fresh context · no prior history/.test(okHtml));
+assert("rejected findings are reported as such", /1 finding rejected/.test(okHtml));
+
 // --- "Try it out" hands-on preview at the feedback gate ---------------------
 
 // (i) kind:"web" + path → sandboxed demo iframe resolving to /work/<path> on the

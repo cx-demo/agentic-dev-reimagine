@@ -52,6 +52,31 @@ export function createAgentLoopActions({ servers, refreshAll }) {
       },
     },
     {
+      // The plan review needs subagents, and subagents need an active turn.
+      // Running it here -- inside the agent's tool call -- is what supplies
+      // that turn; a webview click cannot, so the coordinator routes UI-origin
+      // triggers back through the agent to this action.
+      name: "resume_panel",
+      description: "Run the pending Agent Loop plan review. Must be invoked by the agent: the review spawns subagents, which requires an active agent turn.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          owner: { type: "string" },
+          repo: { type: "string" },
+          issue: { type: "number" },
+        },
+        required: ["owner", "repo", "issue"],
+        additionalProperties: false,
+      },
+      handler: async (ctx) => {
+        const entry = servers.get(ctx && ctx.instanceId);
+        if (!entry || !entry.coordinator) return { ok: false, error: "Agent Loop instance is not active" };
+        const out = await entry.coordinator.resumePanel((ctx && ctx.input) || {});
+        refreshAll(ctx && ctx.instanceId);
+        return out;
+      },
+    },
+    {
       name: "submit_stage",
       description: "Submit a generated stage asset for this Agent Loop canvas instance.",
       inputSchema: {

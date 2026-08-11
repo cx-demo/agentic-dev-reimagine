@@ -199,6 +199,10 @@ await test("retrying the review re-runs step 2 against the same draft", async ()
     controlCommentId: controlId(fake), expectedTxn: failedState.txn, data: {},
   });
   await coordinator.panelSettled();
+  // A click cannot spawn subagents: it only files a work order. The agent
+  // picking it up is what runs the panel inside a turn.
+  await coordinator.resumePanel({ owner: "o", repo: "r", issue: 7 });
+  await coordinator.panelSettled();
 
   const st = stateOf(fake);
   assert.equal(calls, 2, "the review ran again");
@@ -281,6 +285,10 @@ await test("send-back re-runs synthesis only and reuses the stored review", asyn
     data: { decisions: [{ clauseId: "c1", action: "pin" }, { clauseId: "c2", action: "send-back", instruction: "Name the hash." }] },
   });
   await coordinator.panelSettled();
+  // A click cannot spawn subagents: it only files a work order. The agent
+  // picking it up is what runs the panel inside a turn.
+  await coordinator.resumePanel({ owner: "o", repo: "r", issue: 7 });
+  await coordinator.panelSettled();
 
   assert.equal(calls.length, 2);
   assert.equal(calls[1].mode, "synthesis-only");
@@ -288,6 +296,77 @@ await test("send-back re-runs synthesis only and reuses the stored review", asyn
   assert.equal(calls[1].rev, 2);
   assert.deepEqual(calls[1].decisions.map((d) => d.action), ["pin", "send-back"]);
   assert.equal(stateOf(fake).gate, "plan-review");
+});
+
+// Regression: a webview click used to call the factory directly. With no agent
+// turn behind the HTTP request the host refuses the spawn, `ctx.agent` resolves
+// null, and the panel blamed the model for a review it was never allowed to
+// start. Measured: same factory, 1 subagent with a live turn, 0 when idle.
+await test("a UI click does not run the panel itself -- it asks the agent to", async () => {
+  const calls = [];
+  const { fake, coordinator, prompts } = await makePlanLoop({
+    runPanel: async (input) => { calls.push(input); return panelResultFrom(input.clauses); },
+  });
+  await coordinator.submitStage({ opId: "iss7/planning-finalize/t5", submissionToken: TOKEN, artifact: { body: draft } });
+  await coordinator.panelSettled();
+  assert.equal(calls.length, 1, "the agent's own submission still runs the panel in-turn");
+
+  const st = stateOf(fake);
+  await coordinator.handleIntent({
+    kind: "plan-retry-review", owner: "o", repo: "r", issue: 7,
+    controlCommentId: controlId(fake), expectedTxn: st.txn, data: {},
+  });
+  await coordinator.panelSettled();
+
+  assert.equal(calls.length, 1, "the click did NOT spawn a review from the turnless HTTP path");
+  const order = prompts[prompts.length - 1];
+  assert.equal(order.kind, "resume_panel", "a work order was filed instead");
+  assert.match(order.prompt, /resume_panel/, "the work order names the action the agent must invoke");
+  assert.equal(stateOf(fake).pending.kind, "plan-panel", "the panel stays pending until the agent runs it");
+
+  await coordinator.resumePanel({ owner: "o", repo: "r", issue: 7 });
+  await coordinator.panelSettled();
+  assert.equal(calls.length, 2, "the agent's turn is what actually runs the review");
+  assert.equal(stateOf(fake).gate, "plan-review", "and the gate opens as normal");
+});
+
+// resume_panel is agent-invocable, so it must be safe to invoke at any time.
+await test("resume_panel is a no-op when no review is pending", async () => {
+  const calls = [];
+  const { coordinator } = await makePlanLoop({
+    runPanel: async (input) => { calls.push(input); return panelResultFrom(input.clauses); },
+  });
+  const out = await coordinator.resumePanel({ owner: "o", repo: "r", issue: 7 });
+  assert.equal(out.ok, true);
+  assert.equal(out.ran, false, "nothing was pending, so nothing ran");
+  assert.equal(calls.length, 0);
+});
+
+// Resuming a stranded panel must tell the agent to supply a turn, not to write
+// a plan -- the canvas runs the review itself.
+await test("resuming a pending review asks the agent to invoke resume_panel", async () => {
+  const calls = [];
+  const { fake, coordinator, prompts } = await makePlanLoop({
+    runPanel: async (input) => { calls.push(input); return panelResultFrom(input.clauses); },
+  });
+  await coordinator.submitStage({ opId: "iss7/planning-finalize/t5", submissionToken: TOKEN, artifact: { body: draft } });
+  await coordinator.panelSettled();
+
+  const st = stateOf(fake);
+  await coordinator.handleIntent({
+    kind: "plan-retry-review", owner: "o", repo: "r", issue: 7,
+    controlCommentId: controlId(fake), expectedTxn: st.txn, data: {},
+  });
+  await coordinator.panelSettled();
+  const before = calls.length;
+
+  await coordinator.handleIntent({ kind: "resume", owner: "o", repo: "r", issue: 7 });
+  await coordinator.panelSettled();
+
+  assert.equal(calls.length, before, "resume still does not spawn from the turnless path");
+  const order = prompts[prompts.length - 1].prompt;
+  assert.match(order, /resume_panel/, "the work order names the action");
+  assert.match(order, /Do not write or edit the plan/, "and does not ask the agent to author a plan");
 });
 
 // The headline guarantee, end to end through the coordinator.
@@ -310,6 +389,10 @@ await test("a pinned clause survives a hostile re-synthesis byte for byte", asyn
     kind: "plan-steer", owner: "o", repo: "r", issue: 7, controlCommentId: controlId(fake), expectedTxn: st.txn,
     data: { decisions: [{ clauseId: "c1", action: "pin" }, { clauseId: "c2", action: "send-back", instruction: "Tighten." }] },
   });
+  await coordinator.panelSettled();
+  // A click cannot spawn subagents: it only files a work order. The agent
+  // picking it up is what runs the panel inside a turn.
+  await coordinator.resumePanel({ owner: "o", repo: "r", issue: 7 });
   await coordinator.panelSettled();
 
   const after = findCommentByHeading(fake.comments, "🗺 Plan", { newest: true }).body;

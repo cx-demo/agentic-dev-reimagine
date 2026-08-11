@@ -721,7 +721,36 @@ export function createCoordinator(deps) {
   // null, which the panel can only report as "reviewer returned no review". So
   // the public entry points await the job below via panelSettled(key) once
   // their queued section has finished.
-  function schedulePanel(owner, repo, issue, opId) {
+  // Hands the panel to the agent so it runs inside a tool call (i.e. inside a
+  // turn). Returns a settled job: nothing is in flight in *this* process, so
+  // awaiting it must not block the click that triggered it.
+  async function requestPanelTurn(owner, repo, issue, opId) {
+    try {
+      await deps.sendPrompt(
+        `Invoke the Agent Loop canvas action \`resume_panel\` with {"owner":"${owner}","repo":"${repo}","issue":${issue}} to run the pending plan review. `
+        + "Run it now, and do not generate or edit the plan yourself -- the canvas performs the review and records the result.",
+        "resume_panel",
+      );
+    } catch (err) {
+      try { await panelFailed(owner, repo, issue, opId, err); } catch {}
+    }
+  }
+
+  // `origin` decides *who* runs the panel, and it is not cosmetic.
+  //
+  // Spawning a subagent requires an active agent turn. A canvas action runs
+  // inside the agent's tool call, so the turn is alive and `ctx.agent` resolves
+  // normally. A webview click arrives over loopback HTTP with no turn behind
+  // it: `prepareSubagent` is refused, the SDK discards the error, `ctx.agent`
+  // resolves null, and the panel can only report it as "the reviewer returned
+  // no review" -- blaming the model for a host refusal. Measured directly:
+  // the same factory, sleeping 90s before spawning, returned 1 subagent when a
+  // turn was live and 0 subagents (agent === null, nothing thrown) when idle.
+  //
+  // So a UI-origin trigger does not run the panel. It asks the agent to run it,
+  // over the same work-order channel every other stage already uses.
+  function schedulePanel(owner, repo, issue, opId, origin = "agent") {
+    if (origin === "ui" && typeof deps.sendPrompt === "function") return requestPanelTurn(owner, repo, issue, opId);
     const key = `${owner}/${repo}/${issue}`;
     let resolveJob;
     const job = new Promise((r) => { resolveJob = r; });
@@ -975,7 +1004,7 @@ export function createCoordinator(deps) {
     };
     await commit(owner, repo, issue, cur.controlCommentId, next);
     await refresh();
-    schedulePanel(owner, repo, issue, opId);
+    schedulePanel(owner, repo, issue, opId, "ui");
     return { ok: true, state: next };
   }
 
@@ -1003,7 +1032,7 @@ export function createCoordinator(deps) {
     };
     await commit(owner, repo, issue, cur.controlCommentId, next);
     await refresh();
-    schedulePanel(owner, repo, issue, opId);
+    schedulePanel(owner, repo, issue, opId, "ui");
     return { ok: true, state: next };
   }
 
@@ -1216,6 +1245,11 @@ export function createCoordinator(deps) {
   }
 
   function stageSchema(owner, repo, issue, pending, branch, state) {
+    // A pending panel is not an artifact the agent writes -- the canvas runs it.
+    // The agent's only job is to supply the turn the subagents need.
+    if (pending.kind === "plan-panel") {
+      return `Do not write or edit the plan. Invoke the canvas action \`resume_panel\` with {"owner":"${owner}","repo":"${repo}","issue":${issue}} and let it finish; it runs the review and records the result itself.`;
+    }
     if (pending.kind === "research") return "Return artifact { body: markdown research brief }. Include prior art, tradeoffs, and recommended direction.";
     if (pending.kind === "prototype") {
       const base = `${owner}/${repo}/${issue}/round-${pending.round || 1}`;
@@ -1228,5 +1262,21 @@ export function createCoordinator(deps) {
     return "Return the requested asset only.";
   }
 
-  return { kickoff, handleIntent, submitStage, resume: (x) => handleIntent({ ...x, kind: "resume" }), buildWorkOrder, panelSettled };
+  // Invoked by the `resume_panel` canvas action, i.e. from inside an agent tool
+  // call. `awaitingPanel` keeps that tool call -- and therefore the turn --
+  // pending for the whole review, which is what makes the subagents spawnable.
+  async function resumePanel({ owner, repo, issue } = {}) {
+    if (!owner || !repo || !issue) return { ok: false, error: "owner, repo and issue are required" };
+    const cur = await read(owner, repo, issue);
+    const pending = cur.state?.pending;
+    if (!pending || pending.kind !== "plan-panel" || pending.phase !== "panel") {
+      return { ok: true, state: cur.state, ran: false };
+    }
+    const key = `${owner}/${repo}/${issue}`;
+    await awaitingPanel(key, async () => schedulePanel(owner, repo, issue, pending.opId, "agent"));
+    const after = await read(owner, repo, issue);
+    return { ok: true, state: after.state, ran: true };
+  }
+
+  return { kickoff, handleIntent, submitStage, resume: (x) => handleIntent({ ...x, kind: "resume" }), resumePanel, buildWorkOrder, panelSettled };
 }

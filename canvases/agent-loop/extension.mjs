@@ -114,7 +114,10 @@ function describeFailure(envelope, spawned) {
     const value = envelope.failure.value;
     bits.push(`- limit ${kind}${value === undefined ? "" : `=${value}`} reached`);
   } else if (spawned === 0) {
-    bits.push("- the host admitted no subagent, so the review never started");
+    bits.push(
+      "- the host admitted no subagent, so the review never started"
+      + " (a review spawns subagents, which requires an active agent turn; ask the agent to run it)",
+    );
   } else if (envelope.error) {
     bits.push(`- ${String(envelope.error).slice(0, 300)}`);
   }

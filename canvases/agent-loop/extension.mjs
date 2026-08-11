@@ -95,8 +95,13 @@ session = await joinSession({
 // The panel runs as a factory so its subagents get genuinely fresh contexts.
 // A non-completed run is an error here: the coordinator decides whether that
 // degrades or fails, and it must never mistake an empty envelope for a review.
+//
+// NOTE: the registration key on joinSession is `factories`, but the runtime
+// accessor is the singular `session.factory`. They do not match, and the
+// plural is a private field, so reaching for it fails at call time rather
+// than at startup.
 async function runPlanPanel(args) {
-  const envelope = await session.factories.run(planPanel, { args, limits: DEFAULT_LIMITS });
+  const envelope = await session.factory.run(planPanel, { args, limits: DEFAULT_LIMITS });
   if (!envelope || envelope.status !== "completed") {
     throw new Error(`plan panel run ${envelope ? envelope.status : "failed"}`);
   }
@@ -105,9 +110,13 @@ async function runPlanPanel(args) {
   return result;
 }
 
-setCapabilities({ panelAvailable: !!planPanel });
+// Both halves of the API must be present. Checking only `defineFactory` proves
+// a factory can be *described*, not that it can be *run*, which reports the
+// panel as available and then fails mid-plan instead of degrading up front.
+const panelAvailable = !!planPanel && typeof session?.factory?.run === "function";
+setCapabilities({ panelAvailable });
 
 await session.log(
-  planPanel ? "Agent Loop canvas extension ready (plan panel enabled)." : "Agent Loop canvas extension ready (plan panel unavailable).",
+  panelAvailable ? "Agent Loop canvas extension ready (plan panel enabled)." : "Agent Loop canvas extension ready (plan panel unavailable).",
   { ephemeral: true },
 );

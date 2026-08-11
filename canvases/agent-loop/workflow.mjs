@@ -3,6 +3,8 @@ import { mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, normalize, sep } from "node:path";
 import { STATE_SENTINEL, parseControlBlock, hasSentinel, parseQuestionnaire } from "./github.mjs";
+import { normalizeClauses, renderClauses, parseClauses, indexClauses, spliceSynthesis, planStats, CLAUSE_ID_RE } from "./clauses.mjs";
+import { DEFAULT_REVIEWERS, assertProviderDiversity } from "./panel.mjs";
 
 export const LABEL_DEFINITIONS = [
   { name: "agent-loop", color: "5319e7", description: "Managed by the Agent Loop canvas" },
@@ -31,6 +33,30 @@ function shortTitle(idea) {
   return s.length > 80 ? s.slice(0, 77) + "…" : s || "Agent Loop job";
 }
 function issueUrl(owner, repo, issue) { return `https://github.com/${owner}/${repo}/issues/${issue}`; }
+
+// A plan submitted as plain markdown is split into one clause per heading so the
+// steer-pins gate has something to pin. Explicit clauses from the stage agent
+// always win over this fallback.
+export function clausesFromMarkdown(md) {
+  const lines = String(md || "").split("\n");
+  const out = [];
+  let cur = null;
+  for (const line of lines) {
+    const m = line.match(/^#{2,4}\s+(.+?)\s*$/);
+    if (m) {
+      if (cur) out.push(cur);
+      cur = { id: `c${out.length + 1}`, title: m[1].trim(), text: "" };
+    } else if (cur) {
+      cur.text += line + "\n";
+    }
+  }
+  if (cur) out.push(cur);
+  const cleaned = out
+    .map((c) => ({ ...c, text: c.text.trim() }))
+    .filter((c) => c.title && c.text);
+  if (cleaned.length) return cleaned.map((c, i) => ({ ...c, id: `c${i + 1}` }));
+  return [{ id: "c1", title: "Plan", text: String(md || "").trim() }];
+}
 function prUrl(owner, repo, number) { return `https://github.com/${owner}/${repo}/pull/${number}`; }
 
 function renderControl(data) {
@@ -42,6 +68,20 @@ function renderControl(data) {
 ${JSON.stringify(data, null, 2)}
 \`\`\`
 </details>`;
+}
+
+// GitHub rejects comment bodies over 65536 characters. The control block is ONE
+// comment holding the whole serialized state, so panel evidence must never be
+// inlined here — it lives in its own comments and the state keeps only pointers.
+export const CONTROL_BODY_LIMIT = 65536;
+const CONTROL_BUDGET = 48000;
+
+export function assertControlSize(data) {
+  const size = renderControl(data).length;
+  if (size > CONTROL_BUDGET) {
+    throw new Error(`control block is too large (${size} > ${CONTROL_BUDGET} chars); store evidence in a separate comment`);
+  }
+  return size;
 }
 
 function marker(type, opId, payload) {
@@ -182,6 +222,7 @@ export function createCoordinator(deps) {
       if (!live || String(live.commentId) !== String(controlCommentId)) throw new Error("canonical control comment changed");
       if (expectedTxn != null && Number(live.data.txn) !== Number(expectedTxn)) throw new Error("control txn changed before update");
     }
+    assertControlSize(next);
     const body = renderControl(next);
     if (controlCommentId) await github.updateComment(owner, repo, controlCommentId, body);
     else {
@@ -356,6 +397,8 @@ export function createCoordinator(deps) {
       if (intent.kind === "answers") return answers(owner, repo, issue, cur, data, intent);
       if (intent.kind === "plan-ok") return planOk(owner, repo, issue, cur, data, intent);
       if (intent.kind === "plan-revise") return planRevise(owner, repo, issue, cur, data, intent);
+      if (intent.kind === "plan-steer") return planSteer(owner, repo, issue, cur, data, intent);
+      if (intent.kind === "panel-config") return panelConfig(owner, repo, issue, cur, data, intent);
       if (intent.kind === "revise") return revise(owner, repo, issue, cur, data, intent);
       if (intent.kind === "ship") return ship(owner, repo, issue, cur, data, intent);
       throw new Error(`unknown intent kind ${intent.kind}`);
@@ -583,8 +626,17 @@ export function createCoordinator(deps) {
     if (kind === "plan") {
       const body = String(artifact.body || "").trim();
       if (body.length < 10) throw new Error("plan artifact body is required");
-      const c = await github.createComment(owner, repo, issue, renderOut({ heading: "🗺 Plan", body, opId: pending.opId, payload: { kind: "plan" } }));
-      return continueStage(owner, repo, issue, cur, c.id, { kind: "plan" }, body);
+      // The stage agent drafts; the panel reviews. Clauses are optional on the
+      // wire — a plain markdown body is split into one clause per section so an
+      // older stage agent keeps working.
+      const clauses = normalizeClauses(
+        Array.isArray(artifact.clauses) && artifact.clauses.length ? artifact.clauses : clausesFromMarkdown(body),
+      );
+      const payload = { kind: "draft-plan", rev: 1 };
+      const c = await github.createComment(owner, repo, issue, renderOut({
+        heading: "📝 Draft plan", body: renderClauses(clauses), opId: pending.opId, payload,
+      }));
+      return continueStage(owner, repo, issue, cur, c.id, payload, renderClauses(clauses));
     }
     if (kind === "implement") {
       const live = await validateImplementationPr(owner, repo, issue, st, artifact);
@@ -611,6 +663,254 @@ export function createCoordinator(deps) {
     throw new Error(`unsupported pending kind ${kind}`);
   }
 
+  // ---- the two-model plan panel -------------------------------------------
+
+  const panelJobs = new Set();
+  // Lets callers and tests await the out-of-band panel run without polling.
+  async function panelSettled() {
+    while (panelJobs.size) await Promise.all([...panelJobs]);
+  }
+
+  function bodyOf(comments, id) {
+    if (!id) return "";
+    const c = (comments || []).find((x) => String(x.id ?? x.commentId) === String(id));
+    return c ? String(c.body || "") : "";
+  }
+
+  function panelReviewers(st) {
+    const configured = st?.panel?.config?.reviewers;
+    const list = Array.isArray(configured) && configured.length ? configured : DEFAULT_REVIEWERS;
+    assertProviderDiversity(list);
+    return list.map((r) => ({ id: String(r.id), model: String(r.model) }));
+  }
+
+  // Runs outside the issue queue on purpose. Failures are surfaced onto the
+  // issue rather than thrown into a caller that has already returned.
+  function schedulePanel(owner, repo, issue, opId) {
+    let resolveJob;
+    const job = new Promise((r) => { resolveJob = r; });
+    panelJobs.add(job);
+    const run = () => runPanelJob(owner, repo, issue, opId)
+      .catch(async (err) => { try { await panelFailed(owner, repo, issue, opId, err); } catch {} })
+      .finally(() => { panelJobs.delete(job); resolveJob(); });
+    if (deps.schedule) deps.schedule(run); else setTimeout(run, 0);
+    return job;
+  }
+
+  async function runPanelJob(owner, repo, issue, opId) {
+    const cur = await read(owner, repo, issue);
+    const st = cur.state;
+    const pending = st?.pending;
+    // Another worker may have finished this exact run already.
+    if (!pending || pending.kind !== "plan-panel" || pending.opId !== opId || pending.phase !== "panel") return { ok: true, state: st };
+
+    const clauses = parseClauses(bodyOf(cur.comments, pending.draftCommentId));
+    const stored = st.panel?.reviews || [];
+    const mode = pending.mode === "synthesis-only" ? "synthesis-only" : "full";
+
+    // q9: on by default, no flag, and a silent fallback when the host cannot run
+    // subagents. "Silent" means it does not interrupt — it is still recorded.
+    if (typeof deps.runPanel !== "function") {
+      return finishPanel(owner, repo, issue, opId, {
+        clauses, reviews: stored, quotes: {}, disagreements: [], models: [],
+        skipped: { reason: "factories-unavailable" },
+      });
+    }
+
+    const result = await deps.runPanel({
+      owner, repo, issue, opId, mode, rev: Number(pending.rev || 1),
+      reviewers: panelReviewers(st),
+      reviews: stored,
+      clauses,
+      decisions: pending.decisions || [],
+      request: String(cur.iss?.body || ""),
+      research: bodyOf(cur.comments, st.artifacts?.research?.commentId),
+      answers: bodyOf(cur.comments, st.artifacts?.answers?.commentId),
+      feedback: pending.feedback || "",
+      baseBranch: st.baseBranch || "main",
+      branch: branchFor(issue),
+    });
+    return finishPanel(owner, repo, issue, opId, result);
+  }
+
+  function renderEvidence(result, reviewers) {
+    const lines = [];
+    const models = (result.models || reviewers || []).map((m) => `\`${m.model}\`${m.family ? ` (${m.family})` : ""}`);
+    lines.push(`Reviewed by ${models.join(" and ") || "the panel"}, each in a fresh context with no prior conversation history.`);
+    if (result.skipped) lines.push(`\n> Panel skipped — ${result.skipped.reason}. The draft plan is shown unreviewed.`);
+    if (result.degraded) {
+      const missing = result.degraded.missing.map((m) => `\`${m.model}\` (${m.error})`).join(", ");
+      lines.push(`\n> ⚠️ Degraded run — ${missing} did not respond. This plan was reviewed by ${result.degraded.survived.join(", ")} only.`);
+    }
+    for (const review of result.reviews || []) {
+      lines.push(`\n### ${review.reviewerId} — ${review.verdict}`);
+      if (review.strengths?.length) lines.push(`**Strengths**\n${review.strengths.map((s) => `- ${s}`).join("\n")}`);
+      if (review.risks?.length) {
+        lines.push(`**Risks**\n${review.risks.map((r) => `- \`${r.severity}\`${r.clauseId ? ` [${r.clauseId}]` : ""} ${r.evidence} → ${r.recommendation}`).join("\n")}`);
+      }
+      if (review.omissions?.length) lines.push(`**Omissions**\n${review.omissions.map((s) => `- ${s}`).join("\n")}`);
+    }
+    if (result.disagreements?.length) {
+      lines.push(`\n### Disagreements`);
+      lines.push(result.disagreements.map((d) => `- **${d.topic}** — ${d.positions || "positions differed"} → _${d.resolution}_`).join("\n"));
+    }
+    return lines.join("\n");
+  }
+
+  async function finishPanel(owner, repo, issue, opId, result) {
+    return enqueueIssue(`${owner}/${repo}/${issue}`, async () => {
+      const cur = await read(owner, repo, issue);
+      const st = cur.state;
+      const pending = st?.pending;
+      if (!pending || pending.kind !== "plan-panel" || pending.opId !== opId) return { ok: true, state: st };
+
+      const prev = parseClauses(bodyOf(cur.comments, pending.draftCommentId));
+      const index = st.artifacts?.plan?.clauses || indexClauses(prev);
+      const usedIds = Array.from(new Set([
+        ...(st.panel?.usedIds || []),
+        ...prev.map((c) => c.id),
+      ]));
+      // Pinned clauses are re-inserted verbatim here; a hash mismatch fails the
+      // whole splice rather than quietly shipping edited text as "pinned".
+      const finalClauses = spliceSynthesis({
+        prev, next: result.clauses, decisions: pending.decisions || [], index, usedIds,
+      });
+
+      const rev = Number(pending.rev || 1);
+      const evidenceBody = renderEvidence(result, panelReviewers(st));
+      const evId = (await github.createComment(owner, repo, issue, renderSys({
+        heading: `🧑‍⚖️ Panel evidence — rev ${rev}`, body: evidenceBody,
+        opId: `${opId}/evidence/${rev}`, payload: { rev, degraded: !!result.degraded, skipped: !!result.skipped },
+      }))).id;
+
+      const planBody = renderClauses(finalClauses);
+      const planId = (await github.createComment(owner, repo, issue, renderOut({
+        heading: `🗺 Plan${result.degraded ? " (single-reviewer)" : ""}`, body: planBody,
+        opId: `${opId}/plan/${rev}`, payload: { kind: "plan", rev },
+      }))).id;
+
+      const next = {
+        ...clone(st),
+        stage: "planning",
+        gate: "plan-review",
+        status: "waiting",
+        statusText: result.degraded ? "Waiting for your approval — one reviewer was unavailable." : "Waiting for your plan approval.",
+        pending: null,
+        txn: Number(st.txn || 0) + 1,
+        updatedAt: now(),
+      };
+      next.artifacts = {
+        ...(next.artifacts || {}),
+        plan: { ...(next.artifacts?.plan || {}), commentId: planId, approved: null, rev, clauses: indexClauses(finalClauses) },
+      };
+      // Only pointers and a compact index live in the control block; the reviews
+      // themselves stay in the evidence comment.
+      next.panel = {
+        ...(st.panel || {}),
+        rev,
+        evidenceCommentId: evId,
+        models: result.models || [],
+        degraded: result.degraded || null,
+        skipped: result.skipped || null,
+        disagreements: (result.disagreements || []).length,
+        quotes: result.quotes || {},
+        reviews: result.reviews || [],
+        usedIds: Array.from(new Set([...usedIds, ...finalClauses.map((c) => c.id)])),
+      };
+      // Reviews are the largest field and the only one safe to shed: they remain
+      // fully readable in the evidence comment.
+      try { assertControlSize(next); }
+      catch { next.panel.reviews = []; next.panel.quotes = {}; next.panel.reviewsCommentId = evId; }
+
+      await commit(owner, repo, issue, cur.controlCommentId, next);
+      await refresh();
+      return { ok: true, state: next };
+    });
+  }
+
+  async function panelFailed(owner, repo, issue, opId, err) {
+    return enqueueIssue(`${owner}/${repo}/${issue}`, async () => {
+      const cur = await read(owner, repo, issue);
+      const st = cur.state;
+      if (!st?.pending || st.pending.kind !== "plan-panel" || st.pending.opId !== opId) return { ok: true, state: st };
+      const why = err && err.message ? err.message : String(err);
+      await github.createComment(owner, repo, issue, renderSys({
+        heading: "⚠️ Plan panel failed", body: `The review panel could not complete: ${why}\n\nThe draft plan is shown unreviewed so you can still steer it.`,
+        opId: `${opId}/panel-failed`, payload: { error: why },
+      }));
+      // Failing closed here would strand the run with no plan to act on, so the
+      // unreviewed draft is promoted and the failure is stated plainly.
+      const draft = parseClauses(bodyOf(cur.comments, st.pending.draftCommentId));
+      const next = {
+        ...clone(st), stage: "planning", gate: "plan-review", status: "waiting",
+        statusText: "Waiting for your approval — the review panel failed.",
+        pending: null, txn: Number(st.txn || 0) + 1, updatedAt: now(),
+      };
+      next.artifacts = { ...(next.artifacts || {}), plan: { ...(next.artifacts?.plan || {}), commentId: st.pending.draftCommentId, approved: null, clauses: indexClauses(draft) } };
+      next.panel = { ...(st.panel || {}), failed: why, rev: Number(st.pending.rev || 1) };
+      await commit(owner, repo, issue, cur.controlCommentId, next);
+      await refresh();
+      return { ok: true, state: next };
+    });
+  }
+
+  // The gate's per-clause controls. Pin/drop/send-back are applied by re-running
+  // synthesis only, reusing the stored reviews (q4).
+  async function planSteer(owner, repo, issue, cur, data, intent) {
+    validateIntent(cur, intent, "plan-review");
+    const st = cur.state;
+    const known = new Set((Array.isArray(st.artifacts?.plan?.clauses) ? st.artifacts.plan.clauses : []).map((c) => c.id));
+    const decisions = (Array.isArray(data.decisions) ? data.decisions : []).map((d) => {
+      const clauseId = String(d.clauseId || "");
+      const action = String(d.action || "");
+      if (!CLAUSE_ID_RE.test(clauseId) || !known.has(clauseId)) throw new Error(`unknown clause ${clauseId}`);
+      if (!["pin", "send-back", "drop", "keep"].includes(action)) throw new Error(`unknown clause action ${action}`);
+      return { clauseId, action, instruction: String(d.instruction || "").slice(0, 2000) };
+    });
+    if (!decisions.some((d) => d.action === "send-back" || d.action === "drop")) {
+      throw new Error("nothing to re-run: send back or drop at least one clause");
+    }
+    const newTxn = Number(st.txn || 0) + 1;
+    const opId = opTxn(issue, "plan-steer", newTxn);
+    const summary = decisions.filter((d) => d.action !== "keep")
+      .map((d) => `- \`${d.clauseId}\` **${d.action}**${d.instruction ? ` — ${d.instruction}` : ""}`).join("\n");
+    const inId = await postInputOnce(owner, repo, issue, cur.comments, opId, "🎯 Steer plan", summary);
+    const rev = Number(st.panel?.rev || 1) + 1;
+    const pending = {
+      opId, kind: "plan-panel", phase: "panel", mode: "synthesis-only", rev,
+      draftCommentId: st.artifacts?.plan?.commentId || st.artifacts?.plan?.draftCommentId,
+      decisions, inputCommentIds: [inId], attempt: 1,
+    };
+    const next = {
+      ...clone(st), stage: "planning", gate: null, status: "working",
+      statusText: `Re-synthesizing with your instructions (reviews from rev ${st.panel?.rev || 1})…`,
+      pending, txn: newTxn, updatedAt: now(),
+    };
+    await commit(owner, repo, issue, cur.controlCommentId, next);
+    await refresh();
+    schedulePanel(owner, repo, issue, opId);
+    return { ok: true, state: next };
+  }
+
+  // Model ids are a canvas setting persisted in the control block (q1).
+  async function panelConfig(owner, repo, issue, cur, data, intent) {
+    validateRoute(cur, intent);
+    const st = cur.state;
+    const reviewers = (Array.isArray(data.reviewers) ? data.reviewers : []).map((r) => ({
+      id: String(r.id || "").trim().slice(0, 40),
+      model: String(r.model || "").trim().slice(0, 80),
+    }));
+    assertProviderDiversity(reviewers);
+    const next = {
+      ...clone(st),
+      panel: { ...(st.panel || {}), config: { reviewers, updatedAt: now() } },
+      txn: Number(st.txn || 0) + 1, updatedAt: now(),
+    };
+    await commit(owner, repo, issue, cur.controlCommentId, next);
+    await refresh();
+    return { ok: true, state: next };
+  }
+
   function renderQuestions(questions) {
     const qs = Array.isArray(questions) ? questions : [];
     return qs.map((q, i) => {
@@ -621,7 +921,7 @@ export function createCoordinator(deps) {
     }).join("\n\n");
   }
 
-  async function continueStage(owner, repo, issue, cur, commentId, payload) {
+  async function continueStage(owner, repo, issue, cur, commentId, payload, body) {
     const st = cur.state;
     const pending = st.pending;
     if (!pending) return { ok: true, state: st };
@@ -643,8 +943,28 @@ export function createCoordinator(deps) {
       await commit(owner, repo, issue, cur.controlCommentId, next); await refresh(); return { ok: true, state: next };
     }
     if (pending.kind === "plan") {
-      const next = { ...clone(st), artifacts: { ...(st.artifacts || {}), plan: { commentId, approved: null } }, stage: "planning", gate: "plan-review", status: "waiting", statusText: "Waiting for your plan approval.", pending: null, txn: Number(st.txn || 0) + 1, updatedAt: now() };
-      await commit(owner, repo, issue, cur.controlCommentId, next); await refresh(); return { ok: true, state: next };
+      // The draft is committed and the queue is released BEFORE the panel runs.
+      // Two model calls take minutes; holding the issue lock that long would
+      // stall every other transition on this issue.
+      const rev = Number(payload?.rev || 1);
+      const next = {
+        ...clone(st),
+        artifacts: {
+          ...(st.artifacts || {}),
+          plan: { ...(st.artifacts?.plan || {}), draftCommentId: commentId, approved: null, clauses: indexClauses(parseClauses(String(body || ""))) },
+        },
+        stage: "planning",
+        gate: null,
+        status: "working",
+        statusText: "Two models are reviewing the plan…",
+        pending: { opId: pending.opId, kind: "plan-panel", phase: "panel", mode: "full", rev, draftCommentId: commentId, attempt: 1 },
+        txn: Number(st.txn || 0) + 1,
+        updatedAt: now(),
+      };
+      await commit(owner, repo, issue, cur.controlCommentId, next);
+      await refresh();
+      schedulePanel(owner, repo, issue, pending.opId);
+      return { ok: true, state: next };
     }
     if (pending.kind === "implement") {
       const impl = { commentId, prNumber: payload.prNumber, prUrl: prUrl(owner, repo, payload.prNumber), branch: payload.branch, base: payload.base, headSha: payload.headSha, round: payload.round, preview: payload.preview };
@@ -812,5 +1132,5 @@ export function createCoordinator(deps) {
     return "Return the requested asset only.";
   }
 
-  return { kickoff, handleIntent, submitStage, resume: (x) => handleIntent({ ...x, kind: "resume" }), buildWorkOrder };
+  return { kickoff, handleIntent, submitStage, resume: (x) => handleIntent({ ...x, kind: "resume" }), buildWorkOrder, panelSettled };
 }

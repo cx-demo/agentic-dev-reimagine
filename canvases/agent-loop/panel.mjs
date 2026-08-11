@@ -31,14 +31,16 @@ export const SYNTHESIS_MODEL = "claude-sonnet-5";
 //
 // The credit budget is sized from measurement, not intuition: against the real
 // ~20k-char packet a review costs ~19 credits and synthesis ~6, so a run lands
-// near 25. The ceiling stays well above that. It is soft and post-paid, so
-// headroom costs nothing unless the work is actually done, while setting it too
-// low fails the whole run mid-flight — an asymmetry that argues for headroom.
+// near 25. The ceiling is set well above that (raised to 1000 by request) to
+// give generous headroom for larger packets and repeated retries. It is soft
+// and post-paid, so headroom costs nothing unless the work is actually done,
+// while setting it too low fails the whole run mid-flight — an asymmetry that
+// argues for headroom.
 export const DEFAULT_LIMITS = {
   maxConcurrentSubagents: 1,
   maxTotalSubagents: 4,
   timeoutSeconds: 900,
-  maxAiCredits: 120,
+  maxAiCredits: 1000,
 };
 
 const SEVERITIES = ["high", "medium", "low"];

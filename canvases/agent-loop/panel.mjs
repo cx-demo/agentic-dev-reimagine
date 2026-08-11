@@ -27,6 +27,31 @@ export const REVIEWER = { id: "claude", model: "claude-sonnet-5" };
 // whichever reviewer happened to be listed first.
 export const SYNTHESIS_MODEL = "claude-sonnet-5";
 
+// The reviewer and synthesizer both prefer a specific model, but a preferred
+// model is only a preference: an account or org may not be entitled to it, and a
+// spawn against an unavailable model fails the whole run with `unknown-model`
+// before a single subagent is admitted. `auto` is provisioned for every account,
+// so it is the universal floor: if the preferred model is not in the session's
+// entitled list, the run falls back to `auto` rather than failing closed.
+export const FALLBACK_MODEL = "auto";
+
+// Pure model resolution so the fallback can be tested without the SDK.
+//
+// `available` is the session's entitled model ids. When it is unknown (null —
+// e.g. the runtime could not be asked), the preferred model is used unchanged so
+// the resolver never fabricates a downgrade from missing information. When it is
+// known, the preferred model is used if entitled, else the fallback if entitled,
+// else the preferred model is returned anyway so the caller still fails loudly
+// with the original intent rather than a silently substituted one.
+export function resolveModelId(preferred, available, fallback = FALLBACK_MODEL) {
+  const want = String(preferred || "").trim();
+  if (!Array.isArray(available)) return want;
+  if (available.includes(want)) return want;
+  const alt = String(fallback || "").trim();
+  if (alt && available.includes(alt)) return alt;
+  return want;
+}
+
 // Two agents, each able to retry once in schema mode, is 4 spawns exactly.
 //
 // The credit budget is sized from measurement, not intuition: against the real
@@ -282,7 +307,7 @@ export function reviewNeverRan(model) {
 // transition so the canvas can name the step that is running — or the one that
 // stalled — instead of showing an opaque spinner.
 export async function runPanel(deps, input = {}) {
-  const { agent, step, log, progress } = deps || {};
+  const { agent, step, log, progress, listModels } = deps || {};
   if (typeof agent !== "function") throw new Error("the plan review requires an agent runner");
   const journal = typeof step === "function" ? step : (_key, fn) => fn();
   const note = typeof log === "function" ? log : () => {};
@@ -294,29 +319,47 @@ export async function runPanel(deps, input = {}) {
   const opId = String(input.opId || "");
   const mode = input.mode === "synthesis-only" ? "synthesis-only" : "full";
 
+  // Resolve the preferred models against what this session is actually entitled
+  // to, once, before any spawn. An unentitled preferred model would otherwise
+  // fail the whole run with `unknown-model`; falling back to `auto` keeps the
+  // review running under a model every account has.
+  let available = null;
+  if (typeof listModels === "function") {
+    try {
+      const ids = await listModels();
+      if (Array.isArray(ids)) available = ids.map(String);
+    } catch {
+      available = null;
+    }
+  }
+  const reviewModel = resolveModelId(reviewer.model, available);
+  const synthModel = resolveModelId(SYNTHESIS_MODEL, available);
+  if (reviewModel !== reviewer.model) note(`reviewer model ${reviewer.model} unavailable; falling back to ${reviewModel}`);
+  if (synthModel !== SYNTHESIS_MODEL) note(`synthesis model ${SYNTHESIS_MODEL} unavailable; falling back to ${synthModel}`);
+
   let reviews = [];
 
   if (mode === "synthesis-only") {
     reviews = Array.isArray(input.reviews) ? input.reviews : [];
     if (!reviews.length) throw new Error("synthesis-only run has no stored review to reuse");
-    report({ step: "review", state: "reused", model: reviewer.model, detail: "Reusing the review from the previous revision." });
+    report({ step: "review", state: "reused", model: reviewModel, detail: "Reusing the review from the previous revision." });
   } else {
-    report({ step: "review", state: "running", model: reviewer.model });
+    report({ step: "review", state: "running", model: reviewModel });
     let raw;
     try {
       raw = await journal(`${opId}/review/${reviewer.id}`, () => agent({
         label: `plan-review:${reviewer.id}`,
-        model: reviewer.model,
+        model: reviewModel,
         prompt: reviewPrompt(packet, reviewer.id),
         schema: REVIEW_SCHEMA,
       }));
     } catch (err) {
-      report({ step: "review", state: "failed", model: reviewer.model, detail: err && err.message ? err.message : String(err) });
+      report({ step: "review", state: "failed", model: reviewModel, detail: err && err.message ? err.message : String(err) });
       throw err;
     }
     if (raw == null) {
-      const err = reviewNeverRan(reviewer.model);
-      report({ step: "review", state: "failed", model: reviewer.model, code: err.code, detail: err.message });
+      const err = reviewNeverRan(reviewModel);
+      report({ step: "review", state: "failed", model: reviewModel, code: err.code, detail: err.message });
       throw err;
     }
     // One reviewer means no quorum to fall back on: an unusable review fails the
@@ -326,28 +369,28 @@ export async function runPanel(deps, input = {}) {
     try {
       review = validateReview(raw, { reviewerId: reviewer.id, clauseIds });
     } catch (err) {
-      report({ step: "review", state: "failed", model: reviewer.model, detail: err && err.message ? err.message : String(err) });
+      report({ step: "review", state: "failed", model: reviewModel, detail: err && err.message ? err.message : String(err) });
       throw err;
     }
     reviews = [review];
     const risks = review.risks.length;
     note(`plan review: ${review.verdict}, ${risks} risk${risks === 1 ? "" : "s"}`);
     report({
-      step: "review", state: "done", model: reviewer.model,
+      step: "review", state: "done", model: reviewModel,
       detail: `${risks} finding${risks === 1 ? "" : "s"} · verdict ${review.verdict}`,
     });
   }
 
-  report({ step: "synthesis", state: "running", model: SYNTHESIS_MODEL });
+  report({ step: "synthesis", state: "running", model: synthModel });
   const synthRaw = await journal(`${opId}/synthesis/${input.rev || 1}`, () => agent({
     label: `plan-synthesis:rev${input.rev || 1}`,
-    model: SYNTHESIS_MODEL,
+    model: synthModel,
     prompt: synthesisPrompt(packet, reviews, mode),
     schema: SYNTHESIS_SCHEMA,
   }));
   const synthesis = validateSynthesis(synthRaw);
   report({
-    step: "synthesis", state: "done", model: SYNTHESIS_MODEL,
+    step: "synthesis", state: "done", model: synthModel,
     detail: `${synthesis.clauses.length} clause${synthesis.clauses.length === 1 ? "" : "s"}`,
   });
 
@@ -357,8 +400,8 @@ export async function runPanel(deps, input = {}) {
     clauses: synthesis.clauses,
     disagreements: synthesis.disagreements,
     quotes: attributeQuotes(clauseIds, reviews),
-    models: [{ id: reviewer.id, model: reviewer.model, family: familyOf(reviewer.model) }],
-    synthesisModel: SYNTHESIS_MODEL,
+    models: [{ id: reviewer.id, model: reviewModel, family: familyOf(reviewModel) }],
+    synthesisModel: synthModel,
     freshContexts: true,
   };
 }
@@ -384,6 +427,13 @@ export function planPanelFactoryDefinition(limits = DEFAULT_LIMITS, { resolvePro
       agent: ({ label, model, prompt, schema }) => ctx.agent(prompt, { label, model, schema }),
       step: typeof ctx.step === "function" ? (key, fn) => ctx.step(key, fn) : null,
       log: typeof ctx.log === "function" ? (m) => ctx.log(m) : null,
+      listModels: typeof ctx?.session?.rpc?.models?.list === "function"
+        ? async () => {
+            const res = await ctx.session.rpc.models.list();
+            const models = res && Array.isArray(res.models) ? res.models : [];
+            return models.map((m) => m && m.id).filter(Boolean);
+          }
+        : null,
       progress: typeof resolveProgress === "function"
         ? resolveProgress(String((ctx && ctx.args && ctx.args.opId) || ""))
         : null,

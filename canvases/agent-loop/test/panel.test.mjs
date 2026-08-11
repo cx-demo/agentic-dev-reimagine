@@ -3,6 +3,7 @@ import {
   familyOf, normalizeReviewer, buildPacket,
   validateReview, validateSynthesis, attributeQuotes, runPanel,
   planPanelFactoryDefinition, REVIEWER, SYNTHESIS_MODEL, DEFAULT_LIMITS, FACTORY_NAME,
+  resolveModelId, FALLBACK_MODEL,
 } from "../panel.mjs";
 
 let passed = 0;
@@ -97,6 +98,63 @@ await test("the synthesis model is named, not inherited from the reviewer", asyn
   await runPanel({ agent: f.agent }, { clauses, opId: "iss3/x", reviewer: { id: "r", model: "gpt-5.6-sol" } });
   assert.strictEqual(f.calls[0].model, "gpt-5.6-sol");
   assert.strictEqual(f.calls[1].model, SYNTHESIS_MODEL, "synthesis must not follow the reviewer");
+});
+
+// A preferred model that the session is not entitled to would fail the run with
+// `unknown-model` before any subagent runs. The resolver downgrades it to the
+// universal `auto` floor instead of failing closed.
+await test("resolveModelId falls back to auto only when the preferred model is unentitled", () => {
+  // Unknown entitlement (null): never second-guess the preference.
+  assert.strictEqual(resolveModelId("claude-sonnet-5", null), "claude-sonnet-5");
+  // Entitled: keep the preference.
+  assert.strictEqual(resolveModelId("claude-sonnet-5", ["claude-sonnet-5", "auto"]), "claude-sonnet-5");
+  // Unentitled but auto present: fall back.
+  assert.strictEqual(resolveModelId("claude-sonnet-5", ["claude-sonnet-4.6", "auto"]), FALLBACK_MODEL);
+  // Unentitled and no fallback present: return the preference so the run fails
+  // loudly with the original intent rather than a silent substitute.
+  assert.strictEqual(resolveModelId("claude-sonnet-5", ["gpt-5.5"]), "claude-sonnet-5");
+});
+
+// End to end through runPanel: an entitled list without sonnet-5 spawns both the
+// reviewer and the synthesizer under `auto`, and the provenance reports it.
+await test("runPanel spawns under the fallback when sonnet-5 is not entitled", async () => {
+  const f = fakeAgents();
+  const logs = [];
+  const out = await runPanel(
+    { agent: f.agent, log: (m) => logs.push(m), listModels: async () => ["claude-sonnet-4.6", "auto", "gpt-5.5"] },
+    { clauses, opId: "iss3/x", rev: 2 },
+  );
+  assert.strictEqual(f.calls[0].model, FALLBACK_MODEL, "review spawns under auto");
+  assert.strictEqual(f.calls[1].model, FALLBACK_MODEL, "synthesis spawns under auto");
+  assert.strictEqual(out.synthesisModel, FALLBACK_MODEL);
+  assert.deepStrictEqual(out.models, [{ id: "claude", model: FALLBACK_MODEL, family: familyOf(FALLBACK_MODEL) }]);
+  assert.ok(logs.some((m) => /falling back to auto/.test(m)), "the downgrade is logged");
+});
+
+// When the session IS entitled to the preferred model, nothing changes: no
+// fallback, no downgrade log.
+await test("runPanel keeps the preferred model when it is entitled", async () => {
+  const f = fakeAgents();
+  const logs = [];
+  await runPanel(
+    { agent: f.agent, log: (m) => logs.push(m), listModels: async () => ["claude-sonnet-5", "auto"] },
+    { clauses, opId: "iss3/x" },
+  );
+  assert.strictEqual(f.calls[0].model, REVIEWER.model);
+  assert.strictEqual(f.calls[1].model, SYNTHESIS_MODEL);
+  assert.ok(!logs.some((m) => /falling back/.test(m)), "no downgrade when entitled");
+});
+
+// A listModels that throws must not take the run down: entitlement is simply
+// treated as unknown and the preferred model is used unchanged.
+await test("runPanel ignores a failing listModels and keeps the preferred model", async () => {
+  const f = fakeAgents();
+  await runPanel(
+    { agent: f.agent, listModels: async () => { throw new Error("registry down"); } },
+    { clauses, opId: "iss3/x" },
+  );
+  assert.strictEqual(f.calls[0].model, REVIEWER.model);
+  assert.strictEqual(f.calls[1].model, SYNTHESIS_MODEL);
 });
 
 // With one reviewer there is no quorum to degrade into: an unusable review is a

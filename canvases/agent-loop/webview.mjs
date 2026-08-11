@@ -125,6 +125,46 @@ export function renderHtml(token = "", assetBase = "", initialMode = "") {
   .brief pre code { display: block; background: none; padding: 0; font-size: 12px;
     line-height: 1.5; white-space: pre; }
 
+  /* Plan-review gate: clause-level steering (pin / send back / drop) */
+  .prov { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+    margin-top: 16px; padding: 10px 14px; border: 1px solid var(--border);
+    border-radius: var(--radius-compact); background: var(--code-bg); font-size: 12px; }
+  .prov-models { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .prov code { font-family: var(--mono); font-size: 11.5px; }
+  .prov .sep { color: var(--text-muted); }
+  .prov-warn { width: 100%; color: var(--warning-text); font-weight: 600; }
+  .prov-fresh { color: var(--text-muted); }
+
+  .clauses { margin-top: 18px; display: flex; flex-direction: column; gap: 10px; }
+  .clause { border: 1px solid var(--border); border-radius: var(--radius-compact);
+    padding: 12px 14px; background: var(--surface); transition: border-color var(--ease); }
+  .clause[data-act="pin"] { border-color: var(--sage); background: var(--sage-tint); }
+  .clause[data-act="send-back"] { border-color: var(--warning); background: var(--warning-tint); }
+  .clause[data-act="drop"] { opacity: 0.55; }
+  .clause[data-act="drop"] .clause-text { text-decoration: line-through; }
+  .clause-top { display: flex; align-items: baseline; gap: 8px; }
+  .clause-num { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+  .clause-title { font-weight: 700; font-size: 13.5px; flex: 1; }
+  .clause-text { margin-top: 6px; font-size: 13px; line-height: 1.6; color: var(--text); white-space: pre-wrap; }
+  .clause-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip { border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-pill);
+    padding: 3px 11px; font-size: 11.5px; font-weight: 600; cursor: pointer; color: var(--text);
+    font-family: inherit; transition: all var(--ease); }
+  .chip:hover:not(:disabled) { border-color: var(--text-muted); }
+  .chip[aria-pressed="true"] { background: var(--text); color: var(--surface); border-color: var(--text); }
+  .chip:disabled { cursor: not-allowed; opacity: var(--opacity-dim); }
+  .chip.evi { margin-left: auto; }
+  .clause-instruct { margin-top: 8px; }
+  .clause-evidence { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border);
+    font-size: 12px; display: flex; flex-direction: column; gap: 7px; }
+  .quote { display: flex; gap: 8px; align-items: flex-start; line-height: 1.55; }
+  .quote-who { font-family: var(--mono); font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.04em; padding: 1px 6px; border-radius: var(--radius-sharp);
+    background: var(--coral-tint); color: var(--coral-text); white-space: nowrap; }
+  .quote-who.sev-high { background: var(--danger-tint); color: var(--danger-text); }
+  .quote-who.sev-medium { background: var(--warning-tint); color: var(--warning-text); }
+  .clause-counts { margin-top: 14px; font-size: 12px; color: var(--text-muted); }
+
   /* Feedback-gate PR review: changed files + inline diff + CI */
   .pr-review { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
   .pr-summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -1089,20 +1129,78 @@ function paintQuestionStep(s, questions, focusStep, focusChoice) {
 }
 
 // ---- Plan-review gate --------------------------------------------------------
+// The human steers at the OUTPUT level: every clause can be pinned (frozen
+// byte-for-byte), sent back with an instruction, or dropped. A send-back re-runs
+// synthesis only — the two reviews are reused, not re-billed.
+function renderProvenance(s) {
+  const p = s.panel || {};
+  const models = Array.isArray(p.models) && p.models.length ? p.models : (s.panelReviewers || []);
+  const bits = [];
+  if (models.length) {
+    bits.push('<span class="prov-models">' + svg("gate") +
+      models.map((m) => '<code>' + esc(m.model || m.id) + '</code>').join('<span class="sep">+</span>') +
+      '</span>');
+    bits.push('<span class="prov-fresh">fresh contexts · no prior history</span>');
+  }
+  if (p.rev) bits.push('<span class="prov-fresh">rev ' + esc(p.rev) + '</span>');
+  if (p.disagreements) bits.push('<span class="prov-fresh">' + esc(p.disagreements) + ' disagreement' + (p.disagreements === 1 ? '' : 's') + ' resolved</span>');
+  if (p.evidenceCommentId) bits.push('<button class="chip" id="evidenceBtn" aria-expanded="false">Full reviews</button>');
+  // Degradation never blocks the human, but it is never hidden from them either.
+  if (p.degraded) {
+    const missing = (p.degraded.missing || []).map((m) => esc(m.model || m.id)).join(", ");
+    bits.push('<span class="prov-warn">⚠ Single-reviewer plan — ' + missing + ' did not respond.</span>');
+  }
+  if (p.failed) bits.push('<span class="prov-warn">⚠ The review panel failed (' + esc(p.failed) + '). This is the unreviewed draft.</span>');
+  if (p.skipped) bits.push('<span class="prov-warn">⚠ Plan panel unavailable — this draft was not reviewed.</span>');
+  if (!bits.length) return "";
+  return '<div class="prov">' + bits.join("") + '</div>' +
+    (p.evidenceCommentId ? '<div class="brief" id="evidenceBrief" hidden></div>' : "");
+}
+
+function renderClauseList(clauses, quotes, locked) {
+  return '<div class="clauses" id="clauseList">' + clauses.map((c, i) => {
+    const q = (quotes && quotes[c.id]) || c.quotes || [];
+    const dis = locked ? " disabled" : "";
+    return '<div class="clause" data-id="' + esc(c.id) + '" data-act="keep">' +
+      '<div class="clause-top">' +
+        '<span class="clause-num">' + String(i + 1).padStart(2, "0") + '</span>' +
+        '<span class="clause-title">' + esc(c.title) + '</span>' +
+      '</div>' +
+      '<div class="clause-text">' + esc(c.text) + '</div>' +
+      '<div class="clause-acts">' +
+        '<button class="chip" data-act="pin" aria-pressed="false"' + dis + '>Pin</button>' +
+        '<button class="chip" data-act="send-back" aria-pressed="false"' + dis + '>Send back</button>' +
+        '<button class="chip" data-act="drop" aria-pressed="false"' + dis + '>Drop</button>' +
+        (q.length ? '<button class="chip evi" data-act="evidence" aria-expanded="false">Evidence (' + q.length + ')</button>' : '') +
+      '</div>' +
+      '<div class="clause-instruct" hidden>' +
+        '<textarea class="textarea" rows="2" placeholder="What should change about this clause?"' + dis + '></textarea>' +
+      '</div>' +
+      (q.length ? '<div class="clause-evidence" hidden>' + q.map((x) =>
+        '<div class="quote"><span class="quote-who' + (x.severity ? ' sev-' + esc(x.severity) : '') + '">' +
+        esc(x.reviewerId || "panel") + '</span><span>' + esc(x.text) + '</span></div>').join("") + '</div>' : '') +
+      '</div>';
+  }).join("") + '</div>';
+}
+
 function renderPlanReview(s, readOnly) {
   const gated = s.gate === "plan-review" && !readOnly;
   const locked = !!s.pending;
   const head = readOnly ? reviewBar("Plan") : "";
-  const banner = gated ? '<div class="gate-banner">' + svg("gate") + 'Human gate · approve the plan or request changes</div>' : lockBanner(s);
+  const banner = gated ? '<div class="gate-banner">' + svg("gate") + 'Human gate · steer the plan clause by clause, then approve</div>' : lockBanner(s);
   const hasPlan = s.plan && s.plan.commentId;
+  const clauses = Array.isArray(s.planClauses) ? s.planClauses : [];
+  const quotes = (s.panel && s.panel.quotes) || {};
 
   const controls = gated
     ? '<div class="decision">' +
-        '<label class="field" for="planFb">Requested changes — optional when approving, required when requesting changes.</label>' +
+        '<div class="clause-counts" id="clauseCounts"></div>' +
+        '<label class="field" for="planFb">Whole-plan changes — optional when approving, required when requesting a full re-review.</label>' +
         '<textarea class="textarea" id="planFb" placeholder="e.g. Split step 3 into migration + backfill, and call out the rollback path"' +
         (locked ? " disabled" : "") + '></textarea>' +
         '<div class="row">' +
           '<button class="btn btn-primary has-icon" id="planOkBtn" disabled>' + svg("check") + 'Approve plan &amp; build</button>' +
+          '<button class="btn btn-secondary" id="planSteerBtn" disabled>Re-run with my notes</button>' +
           '<button class="btn btn-secondary" id="planReviseBtn"' + (locked ? " disabled" : "") + '>Request changes</button>' +
         '</div>' +
         (hasPlan ? '' : '<p class="hint">Approve unlocks once the plan artifact is posted.</p>') +
@@ -1113,34 +1211,117 @@ function renderPlanReview(s, readOnly) {
     '<div class="card">' + head + banner +
     panelHead("plan", "Planning · plan review", s.title || "Implementation plan") +
     (s.issueUrl ? '<p class="sub">Issue <a class="issue-link" href="#" data-ext="' + esc(s.issueUrl) + '">#' + esc(s.issue) + svg("external") + '</a></p>' : '') +
-    (hasPlan ? '<div class="brief" id="planBrief"><span class="muted">Loading the plan…</span></div>'
+    renderProvenance(s) +
+    (clauses.length ? renderClauseList(clauses, quotes, locked || !gated)
+      : hasPlan ? '<div class="brief" id="planBrief"><span class="muted">Loading the plan…</span></div>'
       : '<p class="muted" style="margin-top:16px">No plan artifact yet.</p>') +
     controls + '</div>';
 
   if (readOnly) wireBack();
-  // Fail closed: Approve stays disabled until the plan prose actually loads, so
-  // the human can never green-light a plan they were unable to see.
-  if (hasPlan) loadComment(s.plan.commentId, "planBrief", (ok) => {
+
+  const evBtn = $("evidenceBtn");
+  if (evBtn) evBtn.onclick = () => {
+    const box = $("evidenceBrief");
+    const open = evBtn.getAttribute("aria-expanded") === "true";
+    evBtn.setAttribute("aria-expanded", open ? "false" : "true");
+    box.hidden = open;
+    if (!open && !box.dataset.loaded) {
+      box.dataset.loaded = "1";
+      box.innerHTML = '<span class="muted">Loading the reviews…</span>';
+      loadComment(s.panel.evidenceCommentId, "evidenceBrief");
+    }
+  };
+
+  // Fail closed: Approve stays disabled until the plan is actually on screen, so
+  // the human can never green-light a plan they were unable to read.
+  if (!clauses.length && hasPlan) loadComment(s.plan.commentId, "planBrief", (ok) => {
     if (!gated || locked) return;
     const b = $("planOkBtn"); if (b) b.disabled = !ok;
   });
   if (!gated || locked) return;
 
+  const decisions = new Map();
+  const refresh = () => {
+    const vals = [...decisions.values()];
+    const sent = vals.filter((d) => d === "send-back").length;
+    const dropped = vals.filter((d) => d === "drop").length;
+    const pinned = vals.filter((d) => d === "pin").length;
+    const counts = $("clauseCounts");
+    if (counts) counts.textContent = clauses.length ? clauses.length + ' clauses · ' + pinned + ' pinned · ' + sent + ' sent back · ' + dropped + ' dropped' : "";
+    const steer = $("planSteerBtn");
+    if (steer) steer.disabled = !(sent || dropped);
+    // Approving while clauses are still sent back would ship text the human has
+    // already rejected, so Approve is held until the re-run lands.
+    const ok = $("planOkBtn");
+    if (ok && clauses.length) ok.disabled = !!(sent || dropped);
+  };
+  if (clauses.length) { $("planOkBtn").disabled = false; refresh(); }
+
+  const list = $("clauseList");
+  if (list) list.onclick = (e) => {
+    const btn = e.target.closest(".chip");
+    if (!btn || btn.disabled) return;
+    const row = btn.closest(".clause");
+    const act = btn.dataset.act;
+    if (act === "evidence") {
+      const box = row.querySelector(".clause-evidence");
+      const open = btn.getAttribute("aria-expanded") === "true";
+      btn.setAttribute("aria-expanded", open ? "false" : "true");
+      box.hidden = open;
+      return;
+    }
+    const already = btn.getAttribute("aria-pressed") === "true";
+    row.querySelectorAll('.chip[aria-pressed]').forEach((b) => b.setAttribute("aria-pressed", "false"));
+    const next = already ? "keep" : act;
+    if (!already) btn.setAttribute("aria-pressed", "true");
+    row.dataset.act = next;
+    decisions.set(row.dataset.id, next);
+    row.querySelector(".clause-instruct").hidden = next !== "send-back";
+    if (next === "send-back") row.querySelector(".clause-instruct textarea").focus();
+    refresh();
+  };
+
+  const setBusy = (v) => {
+    for (const id of ["planOkBtn", "planSteerBtn", "planReviseBtn"]) { const b = $(id); if (b) b.disabled = v; }
+    if (!v) refresh();
+  };
+
   $("planOkBtn").onclick = async () => {
     if ($("planOkBtn").disabled) return; // fail-closed: plan not loaded / not visible
     const note = ($("planFb").value || "").trim();
-    $("planOkBtn").disabled = true; $("planReviseBtn").disabled = true;
+    setBusy(true);
     const ok = await sendIntent("plan-ok", { notes: note }, ctxFor(s));
     if (ok) toast("Plan approved — starting the build.");
-    else { $("planOkBtn").disabled = false; $("planReviseBtn").disabled = false; }
+    else setBusy(false);
   };
+
+  $("planSteerBtn").onclick = async () => {
+    const payload = [...decisions.entries()]
+      .filter((e) => e[1] !== "keep")
+      .map((e) => {
+        const row = list.querySelector('.clause[data-id="' + e[0] + '"]');
+        return { clauseId: e[0], action: e[1], instruction: (row.querySelector(".clause-instruct textarea").value || "").trim() };
+      });
+    const missing = payload.find((d) => d.action === "send-back" && !d.instruction);
+    if (missing) {
+      const row = list.querySelector('.clause[data-id="' + missing.clauseId + '"]');
+      row.querySelector(".clause-instruct textarea").focus();
+      toast("Tell the panel what to change about that clause.");
+      return;
+    }
+    setBusy(true);
+    const ok = await sendIntent("plan-steer", { decisions: payload }, ctxFor(s));
+    if (ok) toast("Re-synthesizing with your notes — the reviews are reused.");
+    else setBusy(false);
+  };
+
   $("planReviseBtn").onclick = async () => {
     const fb = ($("planFb").value || "").trim();
     if (!fb) { $("planFb").focus(); toast("Add the changes you want before requesting a revision."); return; }
-    $("planOkBtn").disabled = true; $("planReviseBtn").disabled = true;
+    setBusy(true);
     const ok = await sendIntent("plan-revise", { feedback: fb }, ctxFor(s));
-    if (ok) toast("Sent — revising the plan.");
-    else { $("planOkBtn").disabled = false; $("planReviseBtn").disabled = false; }
+    if (ok) toast("Sent — the panel will review a new draft.");
+    else setBusy(false);
   };
 }
 

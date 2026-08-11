@@ -9,11 +9,24 @@
 
 import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
 import {
-  startServer, broadcastRefresh,
+  startServer, broadcastRefresh, setCapabilities,
 } from "./server.mjs";
 import { createAgentLoopActions } from "./actions.mjs";
+import { planPanelFactoryDefinition, DEFAULT_LIMITS } from "./panel.mjs";
 
 const CANVAS_ID = "agent-loop";
+
+// Agent Factories are experimental, so registration is guarded end to end: a
+// host without the API keeps the whole loop working and only loses the panel.
+let planPanel = null;
+try {
+  const sdk = await import("@github/copilot-sdk/extension");
+  if (typeof sdk.defineFactory === "function") {
+    planPanel = sdk.defineFactory(planPanelFactoryDefinition());
+  }
+} catch {
+  planPanel = null;
+}
 
 const servers = new Map(); // instanceId -> { server, url, clients:Set }
 let session;
@@ -56,6 +69,7 @@ const agentLoopCanvas = createCanvas({
           await session.send({ prompt });
           await session.log("Agent Loop work order → agent: " + kind, { ephemeral: true });
         },
+        runPanel: planPanel ? runPlanPanel : undefined,
       });
       servers.set(ctx.instanceId, entry);
     }
@@ -73,6 +87,27 @@ const agentLoopCanvas = createCanvas({
   },
 });
 
-session = await joinSession({ canvases: [agentLoopCanvas] });
+session = await joinSession({
+  canvases: [agentLoopCanvas],
+  ...(planPanel ? { factories: [planPanel] } : {}),
+});
 
-await session.log("Agent Loop canvas extension ready.", { ephemeral: true });
+// The panel runs as a factory so its subagents get genuinely fresh contexts.
+// A non-completed run is an error here: the coordinator decides whether that
+// degrades or fails, and it must never mistake an empty envelope for a review.
+async function runPlanPanel(args) {
+  const envelope = await session.factories.run(planPanel, { args, limits: DEFAULT_LIMITS });
+  if (!envelope || envelope.status !== "completed") {
+    throw new Error(`plan panel run ${envelope ? envelope.status : "failed"}`);
+  }
+  const result = envelope.result;
+  if (!result || typeof result !== "object") throw new Error("plan panel returned no result");
+  return result;
+}
+
+setCapabilities({ panelAvailable: !!planPanel });
+
+await session.log(
+  planPanel ? "Agent Loop canvas extension ready (plan panel enabled)." : "Agent Loop canvas extension ready (plan panel unavailable).",
+  { ephemeral: true },
+);

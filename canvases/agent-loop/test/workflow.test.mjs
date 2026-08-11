@@ -167,6 +167,9 @@ await test("full workflow E2E with call-counting fake GitHub", async () => {
   await coordinator.handleIntent(intent(fake, "answers", { answers: [{ id: "q1", prompt: "Framework?", answer: "Vanilla" }] }));
   o = order(prompts);
   await coordinator.submitStage({ opId: o.opId, submissionToken: o.token, artifact: { body: "Plan: implement a small vanilla component with tests." } });
+  // The plan now goes through the review panel out-of-band before the gate opens.
+  assert.equal(stateOf(fake).pending.kind, "plan-panel");
+  await coordinator.panelSettled();
   assert.equal(stateOf(fake).gate, "plan-review");
 
   await coordinator.handleIntent(intent(fake, "plan-ok", { notes: "" }));
@@ -360,6 +363,7 @@ await test("iterate and plan-revise create deterministic pending work", async ()
   await coordinator.handleIntent(intent(fake, "answers", { answers: [] }));
   o = order(prompts);
   await coordinator.submitStage({ owner: "o", repo: "r", issue: 7, opId: o.opId, submissionToken: o.token, artifact: { body: "Initial plan body." } });
+  await coordinator.panelSettled();
   await coordinator.handleIntent(intent(fake, "plan-revise", { feedback: "Tighten rollout" }));
   assert.equal(stateOf(fake).pending.kind, "plan");
   assert.match(stateOf(fake).pending.opId, /planning-finalize/);
@@ -442,6 +446,7 @@ await test("invalid PR blocks implementation artifact", async () => {
   await coordinator.handleIntent(intent(fake, "answers", { answers: [] }));
   o = order(prompts);
   await coordinator.submitStage({ opId: o.opId, submissionToken: o.token, artifact: { body: "Plan for invalid PR." } });
+  await coordinator.panelSettled();
   await coordinator.handleIntent(intent(fake, "plan-ok", {}));
   fake.pull.headRefName = "wrong-branch";
   o = order(prompts);

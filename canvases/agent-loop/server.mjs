@@ -11,6 +11,8 @@ import { homedir } from "node:os";
 import { renderHtml } from "./webview.mjs";
 import * as GitHub from "./github.mjs";
 import { getIssue, listComments, getComment, getPull, getPullHead, getPullFiles, findControlBlock, findCommentByHeading, findPrototypeComments, findQuestionnaireComment, findBuildReadyComment } from "./github.mjs";
+import { parseClauses, indexClauses } from "./clauses.mjs";
+import { DEFAULT_REVIEWERS } from "./panel.mjs";
 import { buildSnapshot } from "./pr.mjs";
 import { createCoordinator } from "./workflow.mjs";
 
@@ -119,21 +121,29 @@ export async function buildState(target = null) {
       getIssue(owner, repo, issue),
       listComments(owner, repo, issue),
     ]);
-    return deriveState({ owner, repo, issue, iss, comments });
+    return deriveState({ owner, repo, issue, iss, comments, capabilities: capabilities() });
   } catch (e) {
     return {
       active: true, owner, repo, issue, error: String(e.message || e), status: "working",
       statusText: "Reading issue state…", stage: "research", gate: null, round: 1, implRound: 0,
       txn: null, pending: null, prototypeRounds: [], prototypeComments: [],
       research: null, questionnaire: null, answers: null, plan: null, impl: null, finalized: null,
+      planClauses: [], panel: null, panelAvailable: capabilities().panelAvailable !== false,
+      panelReviewers: DEFAULT_REVIEWERS,
       approved: null,
     };
   }
 }
 
+// Runtime capabilities are injected by the extension host, which is the only
+// place that knows whether agent factories can actually run.
+let capabilityState = {};
+export function setCapabilities(next) { capabilityState = { ...capabilityState, ...(next || {}) }; }
+function capabilities() { return capabilityState; }
+
 // Pure derivation of the read model from a fetched issue + its comments. Kept
 // side-effect-free so it can be exercised directly with fixtures.
-export function deriveState({ owner, repo, issue, iss, comments }) {
+export function deriveState({ owner, repo, issue, iss, comments, capabilities = {} }) {
   {
     const labels = labelNames(iss);
     const control = findControlBlock(comments);
@@ -215,6 +225,31 @@ export function deriveState({ owner, repo, issue, iss, comments }) {
       const pc = findCommentByHeading(comments, "🗺 Plan", { newest: true });
       if (pc) plan = { commentId: pc.commentId, approved: null };
     }
+    // The gate needs the clause list even when the control block is missing or
+    // was shed for size: the plan comment itself is the durable source.
+    const planComment = plan ? (comments || []).find((c) => String(c.id) === String(plan.commentId)) : null;
+    const parsedClauses = planComment ? parseClauses(String(planComment.body || "")) : [];
+    if (plan && !Array.isArray(plan.clauses) && parsedClauses.length) {
+      plan = { ...plan, clauses: indexClauses(parsedClauses) };
+    }
+    // Index entries carry status/instruction/quotes; the body carries title/text.
+    // The gate needs both, so they are merged here rather than in the webview.
+    const clauseMeta = new Map((Array.isArray(plan && plan.clauses) ? plan.clauses : []).map((c) => [c.id, c]));
+    const planClauses = parsedClauses.map((c) => {
+      const meta = clauseMeta.get(c.id) || {};
+      return {
+        id: c.id, title: c.title, text: c.text,
+        status: meta.status || "open",
+        instruction: meta.instruction || null,
+        quotes: Array.isArray(meta.quotes) ? meta.quotes : [],
+      };
+    });
+
+    let panel = d.panel || null;
+    if (!panel) {
+      const ec = findCommentByHeading(comments, "🧑‍⚖️ Panel evidence", { newest: true });
+      if (ec) panel = { evidenceCommentId: ec.commentId };
+    }
     let impl = artifacts.impl || null;
     if (!impl || impl.prNumber == null) {
       const bc = findBuildReadyComment(comments, impl && impl.commentId);
@@ -248,6 +283,10 @@ export function deriveState({ owner, repo, issue, iss, comments }) {
       questionnaire,
       answers,
       plan,
+      planClauses,
+      panel,
+      panelAvailable: capabilities.panelAvailable !== false,
+      panelReviewers: (panel && panel.config && panel.config.reviewers) || DEFAULT_REVIEWERS,
       impl,
       finalized,
       approved: d.approved || null,
@@ -420,6 +459,7 @@ export async function startServer(deps = {}) {
     assetBase,
     instanceId: deps.instanceId || "agent-loop",
     openPrSession: deps.openPrSession,
+    runPanel: deps.runPanel,
     refresh: async () => { if (serverEntry) broadcastRefresh(serverEntry); },
   });
 

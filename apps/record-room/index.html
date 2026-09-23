@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en" data-api-base="">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Record Room - find it, keep it</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail" aria-label="About Record Room">
+      <div><div class="brand-mark" aria-hidden="true">◉</div><div class="brand">RECORD<br>ROOM<span>.</span></div></div>
+      <div><div class="eyebrow">A quieter way to collect</div><p>Search music, keep tracks you love, and arrange your own list. No account needed.</p></div>
+      <p class="rail-foot">A music catalogue, not a player.<br>Store links open at Apple Music.</p>
+    </aside>
+    <main>
+      <div class="eyebrow">The listening library / 001</div>
+      <h1>Find the music.<br><span>Keep the feeling.</span></h1>
+      <p class="intro">Search by song or artist, then build a playlist that feels like yours.</p>
+      <form class="search" id="searchForm">
+        <label class="visually-hidden" for="query">Search by song or artist</label>
+        <input id="query" type="search" autocomplete="off" placeholder="Song or artist..." minlength="2" maxlength="120" required>
+        <button type="submit">Search</button>
+      </form>
+      <div class="chips"><span>Try a search:</span>
+        <button type="button" data-query="jazz">Jazz</button>
+        <button type="button" data-query="indie">Indie</button>
+        <button type="button" data-query="electronic">Electronic</button>
+      </div>
+      <div class="section-head"><h2>Discover tracks</h2><small>Apple iTunes catalog · US · explicit content excluded</small></div>
+      <p id="searchStatus" role="status" aria-live="polite">Search above to discover tracks.</p>
+      <button type="button" class="secondary" id="retrySearch" hidden>Retry search</button>
+      <div class="results" id="results">
+        <div class="empty">Search a song or artist to start your collection.</div>
+      </div>
+    </main>
+    <section class="playlist" aria-label="Your playlist">
+      <div class="playlist-top"><span class="eyebrow">Your collection</span><span class="tag">Local list</span></div>
+      <div class="record-art" aria-hidden="true"><span>SIDE A / YOU</span></div>
+      <label class="name-label" for="playlistName">Playlist name</label>
+      <input id="playlistName" maxlength="60" value="My favourites">
+      <p class="playlist-count" id="playlistCount">0 tracks</p>
+      <ol class="tracks" id="tracks"></ol>
+      <div class="playlist-footer">
+        <div class="file-actions">
+          <button type="button" class="primary" id="export">Export JSON</button>
+          <button type="button" class="secondary" id="import">Import JSON</button>
+          <input class="visually-hidden" type="file" id="importFile" accept=".json,application/json">
+        </div>
+        <p class="fine" id="saveStatus" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+  </div>
+  <script type="module" src="./app.mjs"></script>
+</body>
+</html>

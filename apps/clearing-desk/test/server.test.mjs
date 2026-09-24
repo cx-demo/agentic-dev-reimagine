@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import net from 'node:net';
 import { startServer } from '../server.mjs';
 
 const transfer = { fromMerchantId: 'merchant-harbor', toMerchantId: 'merchant-summit', amountMinor: 500, currency: 'USD' };
@@ -118,6 +119,42 @@ test('loopback Host, Origin, action header, and static allowlist enforce local b
   assert.match(page.headers.get('content-security-policy'), /connect-src 'self'/);
   assert.equal(page.headers.get('access-control-allow-origin'), null);
   assert.equal((await fetch(`${base}/app.mjs`)).status, 200);
+}));
+
+test('missing and mixed-case Host, and HTTPS Origin cannot bypass local boundary', () => withServer(async (base) => {
+  const { port } = new URL(base);
+  const raw = async (request) => {
+    const socket = net.connect(Number(port), '127.0.0.1');
+    let reply = '';
+    socket.setEncoding('utf8');
+    socket.on('data', (chunk) => { reply += chunk; });
+    const received = new Promise((resolve, reject) => {
+      socket.once('end', () => resolve(reply));
+      socket.once('error', reject);
+    });
+    socket.end(request);
+    return received;
+  };
+
+  // HTTP/1.0 allows missing Host through to the application guard.
+  const missing = await raw('GET /api/v1/transactions HTTP/1.0\r\nConnection: close\r\n\r\n');
+  assert.match(missing, /^HTTP\/1\.1 403 Forbidden/);
+  assert.equal(JSON.parse(missing.split('\r\n\r\n')[1]).error.code, 'invalid_host');
+
+  const mixedCase = await raw(`GET /api/v1/transactions HTTP/1.0\r\nHost: LOCALHOST:${port}\r\nConnection: close\r\n\r\n`);
+  assert.match(mixedCase, /^HTTP\/1\.1 403 Forbidden/);
+  assert.equal(JSON.parse(mixedCase.split('\r\n\r\n')[1]).error.code, 'invalid_host');
+
+  const missingHttp11 = await raw('GET /api/v1/transactions HTTP/1.1\r\nConnection: close\r\n\r\n');
+  assert.match(missingHttp11, /^HTTP\/1\.1 400 Bad Request/);
+
+  const mismatch = await response(base, '/api/v1/transactions', action(transfer, {
+    'Idempotency-Key': 'https-origin',
+    Origin: `https://127.0.0.1:${port}`,
+  }));
+  assert.equal(mismatch.status, 403);
+  assert.equal(mismatch.body.error.code, 'invalid_origin');
+  assert.equal((await response(base, '/api/v1/transactions')).body.total, 3);
 }));
 
 test('new server starts with disposable seed, no prior client keys', () => withServer(async (base) => {

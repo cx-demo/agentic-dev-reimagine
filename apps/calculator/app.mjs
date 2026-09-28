@@ -18,6 +18,8 @@ export class Calculator {
     if (this.waitingForSecond) {
       this.display = value;
       this.waitingForSecond = false;
+    } else if (this.display === "-0") {
+      this.display = `-${value}`;
     } else {
       this.display = this.display === "0" ? value : this.display + value;
     }
@@ -35,9 +37,21 @@ export class Calculator {
 
   changeSign() {
     if (this.error) return;
+    if (this.waitingForSecond) {
+      this.display = "-0";
+      this.waitingForSecond = false;
+      return;
+    }
     if (this.display !== "0") {
       this.display = this.display.startsWith("-") ? this.display.slice(1) : `-${this.display}`;
     }
+  }
+
+  backspace() {
+    if (this.error) return this.clear();
+    if (this.waitingForSecond || this.justEvaluated) return;
+    this.display = this.display.length > 1 ? this.display.slice(0, -1) : "0";
+    if (this.display === "-") this.display = "0";
   }
 
   percent() {
@@ -83,12 +97,14 @@ export class Calculator {
 }
 
 function formatNumber(value) {
-  return Object.is(value, -0) ? "0" : String(value);
+  const normalized = Number(value.toPrecision(12));
+  return Object.is(normalized, -0) ? "0" : String(normalized);
 }
 
 const keyActions = {
   "+": ["operator", "+"], "-": ["operator", "-"], ".": ["decimal"],
-  "%": ["percent"], Enter: ["equals"], "=": ["equals"], Escape: ["clear"], c: ["clear"], C: ["clear"],
+  "%": ["percent"], Enter: ["equals"], "=": ["equals"], Escape: ["clear"], Backspace: ["backspace"],
+  c: ["clear"], C: ["clear"],
 };
 
 if (typeof document !== "undefined") {
@@ -107,6 +123,7 @@ if (typeof document !== "undefined") {
     else if (action === "decimal") calculator.decimal();
     else if (action === "sign") calculator.changeSign();
     else if (action === "percent") calculator.percent();
+    else if (action === "backspace") calculator.backspace();
     else if (action === "equals") calculator.equals();
     else if (action === "clear") calculator.clear();
     render();

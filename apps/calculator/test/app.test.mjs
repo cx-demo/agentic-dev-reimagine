@@ -26,6 +26,25 @@ test("subtracts and supports signed operands", () => {
   assert.equal(calculator.display, "-13");
 });
 
+test("starts a negative second operand with sign change", () => {
+  const calculator = new Calculator();
+  press(calculator, "5", "+", "±", "3", "=");
+  assert.equal(calculator.display, "2");
+});
+
+test("normalizes ordinary decimal results", () => {
+  const calculator = new Calculator();
+  press(calculator, "0", ".", "1", "+", "0", ".", "2", "=");
+  assert.equal(calculator.display, "0.3");
+});
+
+test("removes an entered digit with backspace", () => {
+  const calculator = new Calculator();
+  press(calculator, "1", "2");
+  calculator.backspace();
+  assert.equal(calculator.display, "1");
+});
+
 test("replaces an operator until a second operand is entered", () => {
   const calculator = new Calculator();
   press(calculator, "7", "+", "-", "2", "=");
@@ -61,13 +80,16 @@ test("starts a new one-pair calculation from a result when an operator is select
   assert.equal(calculator.expression, "10 - 3 =");
 });
 
-test("converts a result to a percentage and keeps errors recoverable", () => {
+test("converts a result to a percentage", () => {
   const calculator = new Calculator();
   press(calculator, "5", "+", "5", "=", "%");
   assert.equal(calculator.display, "0.1");
   calculator.digit("1");
   assert.equal(calculator.display, "0.11");
+});
 
+test("keeps overflow errors recoverable", () => {
+  const calculator = new Calculator();
   calculator.clear();
   for (let index = 0; index < 400; index += 1) calculator.digit("9");
   calculator.chooseOperator("+");

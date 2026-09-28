@@ -32,6 +32,13 @@ test("starts a negative second operand with sign change", () => {
   assert.equal(calculator.display, "2");
 });
 
+test("keeps a sign-adjusted result editable", () => {
+  const calculator = new Calculator();
+  press(calculator, "5", "+", "5", "=", "±");
+  calculator.digit("2");
+  assert.equal(calculator.display, "-102");
+});
+
 test("normalizes ordinary decimal results", () => {
   const calculator = new Calculator();
   press(calculator, "0", ".", "1", "+", "0", ".", "2", "=");

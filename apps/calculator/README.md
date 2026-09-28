@@ -9,3 +9,12 @@ python3 -m http.server --directory apps/calculator
 The calculator supports one addition or subtraction at a time, ordinary decimal
 numbers, sign change, and percent. Percent converts the displayed value to a
 fraction: `200 - 25%` displays `199.75`.
+
+Keyboard controls: digits, `+`, `-`, `.`, `%`, Enter or `=`, Escape, Backspace,
+and `c` (case-insensitive) for clear.
+
+Run the focused tests with:
+
+```sh
+node --test apps/calculator/test/app.test.mjs
+```

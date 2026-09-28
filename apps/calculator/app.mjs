@@ -45,6 +45,7 @@ export class Calculator {
     if (this.display !== "0") {
       this.display = this.display.startsWith("-") ? this.display.slice(1) : `-${this.display}`;
     }
+    this.justEvaluated = false;
   }
 
   backspace() {
@@ -97,8 +98,11 @@ export class Calculator {
   }
 }
 
+// Twelve significant digits hide binary artifacts while preserving ordinary input.
+const DISPLAY_PRECISION = 12;
+
 function formatNumber(value) {
-  const normalized = Number(value.toPrecision(12));
+  const normalized = Number(value.toPrecision(DISPLAY_PRECISION));
   return Object.is(normalized, -0) ? "0" : String(normalized);
 }
 

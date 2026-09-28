@@ -33,6 +33,14 @@ test("replaces an operator until a second operand is entered", () => {
   assert.equal(calculator.expression, "7 - 2 =");
 });
 
+test("requires equals before another operation can begin", () => {
+  const calculator = new Calculator();
+  press(calculator, "7", "+", "2", "-");
+  assert.equal(calculator.expression, "7 +");
+  press(calculator, "=");
+  assert.equal(calculator.display, "9");
+});
+
 test("converts the displayed operand to a fraction with percent", () => {
   const calculator = new Calculator();
   press(calculator, "2", "0", "0", "-", "2", "5", "%", "=");
@@ -57,7 +65,10 @@ test("converts a result to a percentage and keeps errors recoverable", () => {
   const calculator = new Calculator();
   press(calculator, "5", "+", "5", "=", "%");
   assert.equal(calculator.display, "0.1");
+  calculator.digit("1");
+  assert.equal(calculator.display, "0.11");
 
+  calculator.clear();
   for (let index = 0; index < 400; index += 1) calculator.digit("9");
   calculator.chooseOperator("+");
   assert.equal(calculator.display, "Error");

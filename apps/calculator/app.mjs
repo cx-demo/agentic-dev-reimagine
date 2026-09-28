@@ -45,10 +45,12 @@ export class Calculator {
     const value = Number(this.display);
     if (!Number.isFinite(value)) return this.setError();
     this.display = formatNumber(value / 100);
+    this.justEvaluated = false;
   }
 
   chooseOperator(operator) {
     if (this.error) return;
+    if (this.operator && !this.waitingForSecond) return;
     const value = Number(this.display);
     if (!Number.isFinite(value)) return this.setError();
     this.firstOperand = value;

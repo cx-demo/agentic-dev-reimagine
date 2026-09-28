@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clearing Desk | Simulated merchant transfers</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.mjs"></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">◇</span><div><strong>CLEARING DESK</strong><small>LOCAL REHEARSAL / USD</small></div></div>
+    <span class="env-badge">● SIMULATION ONLY</span>
+  </header>
+  <main>
+    <section class="intro" aria-labelledby="title">
+      <div><p class="eyebrow">MERCHANT OPERATIONS / 01</p><h1 id="title">Make every move<br><em>account for itself.</em></h1><p>Review pending transfers, inspect status history, and clear or reject simulated money movement. Nothing here moves real funds.</p></div>
+      <div class="intro-note"><span>OPERATING MODE</span><strong>Local, disposable</strong><p>One operator · No login · In-memory data resets when server restarts.</p></div>
+    </section>
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+    <div id="error" class="notice error" role="alert" hidden></div>
+    <section class="balances" aria-labelledby="balance-title">
+      <div class="section-heading"><div><p class="eyebrow">01 / FUNDING</p><h2 id="balance-title">Simulated balances</h2></div><span>USD · cents reconciled after clearance</span></div>
+      <div id="merchant-cards" class="merchant-cards" aria-live="polite"><p>Loading simulated merchants…</p></div>
+    </section>
+    <div class="workspace">
+      <section class="queue" aria-labelledby="queue-title">
+        <div class="section-heading"><div><p class="eyebrow">02 / WORK QUEUE</p><h2 id="queue-title">Transfers <span id="transaction-count"></span></h2></div><button id="refresh" class="text-button" type="button">↻ Refresh</button></div>
+        <div class="filters"><label>Search transfers<input id="search" type="search" placeholder="Merchant or transaction ID" autocomplete="off"></label><label>Status<select id="status-filter"><option value="">All statuses</option><option value="pending">Pending</option><option value="cleared">Cleared</option><option value="rejected">Rejected</option></select></label></div>
+        <div id="queue-list" class="queue-list" aria-live="polite"><p class="empty">Loading simulated transactions…</p></div>
+      </section>
+      <section class="detail" aria-labelledby="detail-title">
+        <div class="section-heading"><div><p class="eyebrow">03 / LEDGER VIEW</p><h2 id="detail-title">Transfer details</h2></div></div>
+        <div id="detail-content"><p class="empty">Select a transaction to review its status trail.</p></div>
+      </section>
+      <aside class="create-panel" aria-labelledby="create-title">
+        <p class="eyebrow">04 / NEW TRANSFER</p><h2 id="create-title">Start pending.</h2>
+        <p>Transfers remain pending until explicitly cleared. Amounts are simulated USD.</p>
+        <form id="create-form">
+          <label>From merchant<select name="fromMerchantId" required><option value="">Choose sender</option></select></label>
+          <label>To merchant<select name="toMerchantId" required><option value="">Choose recipient</option></select></label>
+          <label>Simulated amount (USD)<input name="amount" type="text" inputmode="decimal" placeholder="0.00" pattern="(?:0|[1-9][0-9]{0,6})(?:\.[0-9]{1,2})?" required aria-describedby="amount-help"></label>
+          <small id="amount-help">USD 0.01 to 1,000,000.00. No actual payment.</small>
+          <button class="primary" type="submit">Create pending transfer <span aria-hidden="true">↗</span></button>
+        </form>
+        <p class="aside-foot">ALL ACTIONS LOCAL · DATA RESETS ON RESTART</p>
+      </aside>
+    </div>
+  </main>
+  <dialog id="clear-dialog" aria-labelledby="clear-title">
+    <form method="dialog"><p class="eyebrow">CONFIRM SIMULATED ACTION</p><h2 id="clear-title">Clear this transfer?</h2><p id="clear-description"></p><p>Two balanced ledger entries will move simulated balances. This cannot be undone.</p><div class="dialog-actions"><button value="cancel" type="submit">Cancel</button><button id="confirm-clear" class="primary" value="confirm" type="submit">Confirm clearance</button></div></form>
+  </dialog>
+  <dialog id="reject-dialog" aria-labelledby="reject-title">
+    <form id="reject-form"><p class="eyebrow">REJECT SIMULATED TRANSFER</p><h2 id="reject-title">Record a reason.</h2><label>Rejection reason<textarea name="reason" maxlength="240" required rows="3"></textarea></label><div class="dialog-actions"><button id="cancel-reject" type="button">Cancel</button><button class="primary" type="submit">Reject transfer</button></div></form>
+  </dialog>
+  <footer>Clearing Desk / Simulation only · No real funds, credentials, or settlement rails.</footer>
+</body>
+</html>

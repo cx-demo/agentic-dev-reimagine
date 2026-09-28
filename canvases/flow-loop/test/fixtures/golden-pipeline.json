@@ -1,0 +1,1190 @@
+{
+  "workOrders": [
+    {
+      "kind": "research",
+      "prompt": "AGENT LOOP STAGE WORK ORDER\n1. Use existing canvas instance inst-1; never open another canvas.\n2. Target exactly o/r issue #7; opId iss7/research/t1; kind research; round 1.\n3. Read the issue body: gh api repos/o/r/issues/7 --jq .body\n4. Inspect the repository from the current workspace for implementation constraints and relevant tests. Scope the asset to the issue's requested product and approved direction. Flow Loop canvas files and workflow mechanics are orchestration context, not the feature to plan, build, or review unless the issue explicitly asks to change Flow Loop.\n5. Do not create/update Agent Loop issue comments, labels, control blocks, transitions, or workflow state.\n6. Deterministic branch: agent-loop/issue-7; base branch: main; PR title template: Agent Loop #7: Build a copy button; PR body must reference https://github.com/o/r/issues/7 and opId iss7/research/t1.\n7. Produce only the requested asset. Do not choose next states.\n8. Final action: call submit_stage on canvas instance inst-1 with exactly this input (replace only artifact):\n{\n  \"owner\": \"o\",\n  \"repo\": \"r\",\n  \"issue\": 7,\n  \"opId\": \"iss7/research/t1\",\n  \"submissionToken\": \"<token>\",\n  \"artifact\": \"<stage-specific artifact>\"\n}\n\nSTAGE CONTRACT\nReturn artifact { body: markdown research brief }. Include prior art, tradeoffs, and recommended direction."
+    },
+    {
+      "kind": "prototype",
+      "prompt": "AGENT LOOP STAGE WORK ORDER\n1. Use existing canvas instance inst-1; never open another canvas.\n2. Target exactly o/r issue #7; opId iss7/prototype/r1; kind prototype; round 1.\n3. Read the issue body: gh api repos/o/r/issues/7 --jq .body\n4. Read input comment 101: gh api repos/o/r/issues/comments/101 --jq .body\n5. Inspect the repository from the current workspace for implementation constraints and relevant tests. Scope the asset to the issue's requested product and approved direction. Flow Loop canvas files and workflow mechanics are orchestration context, not the feature to plan, build, or review unless the issue explicitly asks to change Flow Loop.\n6. Do not create/update Agent Loop issue comments, labels, control blocks, transitions, or workflow state.\n7. Deterministic branch: agent-loop/issue-7; base branch: main; PR title template: Agent Loop #7: Build a copy button; PR body must reference https://github.com/o/r/issues/7 and opId iss7/prototype/r1.\n8. Produce only the requested asset. Do not choose next states.\n9. Final action: call submit_stage on canvas instance inst-1 with exactly this input (replace only artifact):\n{\n  \"owner\": \"o\",\n  \"repo\": \"r\",\n  \"issue\": 7,\n  \"opId\": \"iss7/prototype/r1\",\n  \"submissionToken\": \"<token>\",\n  \"artifact\": \"<stage-specific artifact>\"\n}\n\nSTAGE CONTRACT\nWrite 2-3 self-contained HTML prototypes. IDs must be unique. Exact paths are o/r/7/round-1/<id>/index.html under <workRoot>/o/r/7/round-1. Return artifact { options:[{id,title,pitch,path}] } where each path equals the code-derived path."
+    },
+    {
+      "kind": "plan-questions",
+      "prompt": "AGENT LOOP STAGE WORK ORDER\n1. Use existing canvas instance inst-1; never open another canvas.\n2. Target exactly o/r issue #7; opId iss7/planning/t4; kind plan-questions; round 1.\n3. Read the issue body: gh api repos/o/r/issues/7 --jq .body\n4. Read input comment 101: gh api repos/o/r/issues/comments/101 --jq .body\n5. Read input comment 102: gh api repos/o/r/issues/comments/102 --jq .body\n6. Read input comment 103: gh api repos/o/r/issues/comments/103 --jq .body\n7. Inspect the repository from the current workspace for implementation constraints and relevant tests. Scope the asset to the issue's requested product and approved direction. Flow Loop canvas files and workflow mechanics are orchestration context, not the feature to plan, build, or review unless the issue explicitly asks to change Flow Loop.\n8. Do not create/update Agent Loop issue comments, labels, control blocks, transitions, or workflow state.\n9. Deterministic branch: agent-loop/issue-7; base branch: main; PR title template: Agent Loop #7: Build a copy button; PR body must reference https://github.com/o/r/issues/7 and opId iss7/planning/t4.\n10. Produce only the requested asset. Do not choose next states.\n11. Final action: call submit_stage on canvas instance inst-1 with exactly this input (replace only artifact):\n{\n  \"owner\": \"o\",\n  \"repo\": \"r\",\n  \"issue\": 7,\n  \"opId\": \"iss7/planning/t4\",\n  \"submissionToken\": \"<token>\",\n  \"artifact\": \"<stage-specific artifact>\"\n}\n\nSTAGE CONTRACT\nReturn artifact { body } containing ## 📋 Questionnaire with **qN.** questions and optional single/multi choices."
+    },
+    {
+      "kind": "plan",
+      "prompt": "AGENT LOOP STAGE WORK ORDER\n1. Use existing canvas instance inst-1; never open another canvas.\n2. Target exactly o/r issue #7; opId iss7/planning-finalize/t6; kind plan; round 1.\n3. Read the issue body: gh api repos/o/r/issues/7 --jq .body\n4. Read input comment 101: gh api repos/o/r/issues/comments/101 --jq .body\n5. Read input comment 102: gh api repos/o/r/issues/comments/102 --jq .body\n6. Read input comment 103: gh api repos/o/r/issues/comments/103 --jq .body\n7. Read input comment 104: gh api repos/o/r/issues/comments/104 --jq .body\n8. Read input comment 105: gh api repos/o/r/issues/comments/105 --jq .body\n9. Inspect the repository from the current workspace for implementation constraints and relevant tests. Scope the asset to the issue's requested product and approved direction. Flow Loop canvas files and workflow mechanics are orchestration context, not the feature to plan, build, or review unless the issue explicitly asks to change Flow Loop.\n10. Do not create/update Agent Loop issue comments, labels, control blocks, transitions, or workflow state.\n11. Deterministic branch: agent-loop/issue-7; base branch: main; PR title template: Agent Loop #7: Build a copy button; PR body must reference https://github.com/o/r/issues/7 and opId iss7/planning-finalize/t6.\n12. Produce only the requested asset. Do not choose next states.\n13. Final action: call submit_stage on canvas instance inst-1 with exactly this input (replace only artifact):\n{\n  \"owner\": \"o\",\n  \"repo\": \"r\",\n  \"issue\": 7,\n  \"opId\": \"iss7/planning-finalize/t6\",\n  \"submissionToken\": \"<token>\",\n  \"artifact\": \"<stage-specific artifact>\"\n}\n\nSTAGE CONTRACT\nReturn artifact { body: markdown implementation plan }. Do not mutate workflow state."
+    },
+    {
+      "kind": "implement",
+      "prompt": "AGENT LOOP STAGE WORK ORDER\n1. Use existing canvas instance inst-1; never open another canvas.\n2. Target exactly o/r issue #7; opId iss7/implementing/r1; kind implement; round 1.\n3. Read the issue body: gh api repos/o/r/issues/7 --jq .body\n4. Read input comment 108: gh api repos/o/r/issues/comments/108 --jq .body\n5. Read input comment 109: gh api repos/o/r/issues/comments/109 --jq .body\n6. Inspect the repository from the current workspace for implementation constraints and relevant tests. Scope the asset to the issue's requested product and approved direction. Flow Loop canvas files and workflow mechanics are orchestration context, not the feature to plan, build, or review unless the issue explicitly asks to change Flow Loop.\n7. Do not create/update Agent Loop issue comments, labels, control blocks, transitions, or workflow state.\n8. Deterministic branch: agent-loop/issue-7; base branch: main; PR title template: Agent Loop #7: Build a copy button; PR body must reference https://github.com/o/r/issues/7 and opId iss7/implementing/r1.\n9. Produce only the requested asset. Do not choose next states.\n10. Final action: call submit_stage on canvas instance inst-1 with exactly this input (replace only artifact):\n{\n  \"owner\": \"o\",\n  \"repo\": \"r\",\n  \"issue\": 7,\n  \"opId\": \"iss7/implementing/r1\",\n  \"submissionToken\": \"<token>\",\n  \"artifact\": \"<stage-specific artifact>\"\n}\n\nSTAGE CONTRACT\nUse deterministic branch agent-loop/issue-7 targeting base main. Create/update one open PR with title \"Agent Loop #7: Build a copy button\". For web previews, write the demo to the exact code-stamped path o/r/7/impl-round-1/demo/index.html; do not choose another path. Return artifact { summary, preview:{kind:'web'|'command'|'none', run?, notes?} }."
+    },
+    {
+      "kind": "implement",
+      "prompt": "AGENT LOOP STAGE WORK ORDER\n1. Use existing canvas instance inst-1; never open another canvas.\n2. Target exactly o/r issue #7; opId iss7/implementing/r2; kind implement; round 2.\n3. Read the issue body: gh api repos/o/r/issues/7 --jq .body\n4. Read input comment 108: gh api repos/o/r/issues/comments/108 --jq .body\n5. Read input comment 111: gh api repos/o/r/issues/comments/111 --jq .body\n6. Inspect the repository from the current workspace for implementation constraints and relevant tests. Scope the asset to the issue's requested product and approved direction. Flow Loop canvas files and workflow mechanics are orchestration context, not the feature to plan, build, or review unless the issue explicitly asks to change Flow Loop.\n7. Do not create/update Agent Loop issue comments, labels, control blocks, transitions, or workflow state.\n8. Deterministic branch: agent-loop/issue-7; base branch: main; PR title template: Agent Loop #7: Build a copy button; PR body must reference https://github.com/o/r/issues/7 and opId iss7/implementing/r2.\n9. Produce only the requested asset. Do not choose next states.\n10. Final action: call submit_stage on canvas instance inst-1 with exactly this input (replace only artifact):\n{\n  \"owner\": \"o\",\n  \"repo\": \"r\",\n  \"issue\": 7,\n  \"opId\": \"iss7/implementing/r2\",\n  \"submissionToken\": \"<token>\",\n  \"artifact\": \"<stage-specific artifact>\"\n}\n\nSTAGE CONTRACT\nUse deterministic branch agent-loop/issue-7 targeting base main. Create/update one open PR with title \"Agent Loop #7: Build a copy button\". For web previews, write the demo to the exact code-stamped path o/r/7/impl-round-2/demo/index.html; do not choose another path. Return artifact { summary, preview:{kind:'web'|'command'|'none', run?, notes?} }."
+    },
+    {
+      "kind": "finalize",
+      "prompt": "AGENT LOOP STAGE WORK ORDER\n1. Use existing canvas instance inst-1; never open another canvas.\n2. Target exactly o/r issue #7; opId iss7/finalizing/t13; kind finalize; round 1.\n3. Read the issue body: gh api repos/o/r/issues/7 --jq .body\n4. Read input comment 108: gh api repos/o/r/issues/comments/108 --jq .body\n5. Read input comment 113: gh api repos/o/r/issues/comments/113 --jq .body\n6. Inspect the repository from the current workspace for implementation constraints and relevant tests. Scope the asset to the issue's requested product and approved direction. Flow Loop canvas files and workflow mechanics are orchestration context, not the feature to plan, build, or review unless the issue explicitly asks to change Flow Loop.\n7. Do not create/update Agent Loop issue comments, labels, control blocks, transitions, or workflow state.\n8. Deterministic branch: agent-loop/issue-7; base branch: main; PR title template: Agent Loop #7: Build a copy button; PR body must reference https://github.com/o/r/issues/7 and opId iss7/finalizing/t13.\n9. Produce only the requested asset. Do not choose next states.\n10. Final action: call submit_stage on canvas instance inst-1 with exactly this input (replace only artifact):\n{\n  \"owner\": \"o\",\n  \"repo\": \"r\",\n  \"issue\": 7,\n  \"opId\": \"iss7/finalizing/t13\",\n  \"submissionToken\": \"<token>\",\n  \"artifact\": \"<stage-specific artifact>\"\n}\n\nSTAGE CONTRACT\nFinalize the existing PR on branch agent-loop/issue-7; mark it ready if draft. Return artifact { body: markdown finalization summary }."
+    }
+  ],
+  "labelSets": [
+    [
+      "agent-loop",
+      "stage:research",
+      "proto-round:1"
+    ],
+    [
+      "agent-loop",
+      "stage:research",
+      "proto-round:1"
+    ],
+    [
+      "agent-loop",
+      "stage:prototype",
+      "proto-round:1"
+    ],
+    [
+      "agent-loop",
+      "stage:prototype",
+      "proto-round:1"
+    ],
+    [
+      "agent-loop",
+      "stage:prototype",
+      "gate:signoff",
+      "proto-round:1"
+    ],
+    [
+      "agent-loop",
+      "stage:planning",
+      "proto-round:1"
+    ],
+    [
+      "agent-loop",
+      "stage:planning",
+      "proto-round:1"
+    ],
+    [
+      "agent-loop",
+      "stage:planning",
+      "gate:questionnaire",
+      "proto-round:1"
+    ],
+    [
+      "agent-loop",
+      "stage:planning-finalize",
+      "proto-round:1"
+    ],
+    [
+      "agent-loop",
+      "stage:planning-finalize",
+      "proto-round:1"
+    ],
+    [
+      "agent-loop",
+      "stage:planning",
+      "proto-round:1"
+    ],
+    [
+      "agent-loop",
+      "stage:planning",
+      "gate:plan-review",
+      "proto-round:1"
+    ],
+    [
+      "agent-loop",
+      "stage:implementing",
+      "proto-round:1",
+      "impl-round:1"
+    ],
+    [
+      "agent-loop",
+      "stage:implementing",
+      "proto-round:1",
+      "impl-round:1"
+    ],
+    [
+      "agent-loop",
+      "stage:implementing",
+      "gate:feedback",
+      "proto-round:1",
+      "impl-round:1"
+    ],
+    [
+      "agent-loop",
+      "stage:implementing",
+      "proto-round:1",
+      "impl-round:2"
+    ],
+    [
+      "agent-loop",
+      "stage:implementing",
+      "proto-round:1",
+      "impl-round:2"
+    ],
+    [
+      "agent-loop",
+      "stage:implementing",
+      "gate:feedback",
+      "proto-round:1",
+      "impl-round:2"
+    ],
+    [
+      "agent-loop",
+      "stage:finalizing",
+      "proto-round:1",
+      "impl-round:2"
+    ],
+    [
+      "agent-loop",
+      "stage:finalizing",
+      "proto-round:1",
+      "impl-round:2"
+    ],
+    [
+      "agent-loop",
+      "stage:done",
+      "proto-round:1",
+      "impl-round:2"
+    ]
+  ],
+  "trace": [
+    {
+      "step": "kickoff",
+      "state": {
+        "version": 2,
+        "txn": 1,
+        "reqId": "golden-1",
+        "owner": "o",
+        "repo": "r",
+        "issue": 7,
+        "title": "Build a copy button",
+        "baseBranch": "main",
+        "stage": "research",
+        "gate": null,
+        "round": 1,
+        "implRound": 0,
+        "status": "working",
+        "statusText": "Researching prior art…",
+        "updatedAt": "<ts>",
+        "pending": {
+          "opId": "iss7/research/t1",
+          "kind": "research",
+          "inputCommentIds": [],
+          "attempt": 1,
+          "submissionTokenHash": "<token-hash>"
+        },
+        "artifacts": {}
+      },
+      "labels": [
+        "agent-loop",
+        "stage:research",
+        "proto-round:1"
+      ]
+    },
+    {
+      "step": "submit:research",
+      "state": {
+        "version": 2,
+        "txn": 2,
+        "reqId": "golden-1",
+        "owner": "o",
+        "repo": "r",
+        "issue": 7,
+        "title": "Build a copy button",
+        "baseBranch": "main",
+        "stage": "prototype",
+        "gate": null,
+        "round": 1,
+        "implRound": 0,
+        "status": "working",
+        "statusText": "Building prototype options…",
+        "updatedAt": "<ts>",
+        "pending": {
+          "opId": "iss7/prototype/r1",
+          "kind": "prototype",
+          "inputCommentIds": [
+            101
+          ],
+          "round": 1,
+          "attempt": 1,
+          "submissionTokenHash": "<token-hash>"
+        },
+        "artifacts": {
+          "research": {
+            "commentId": 101
+          }
+        }
+      },
+      "labels": [
+        "agent-loop",
+        "stage:prototype",
+        "proto-round:1"
+      ]
+    },
+    {
+      "step": "submit:prototype",
+      "state": {
+        "version": 2,
+        "txn": 3,
+        "reqId": "golden-1",
+        "owner": "o",
+        "repo": "r",
+        "issue": 7,
+        "title": "Build a copy button",
+        "baseBranch": "main",
+        "stage": "prototype",
+        "gate": "signoff",
+        "round": 1,
+        "implRound": 0,
+        "status": "waiting",
+        "statusText": "Waiting for your sign-off.",
+        "updatedAt": "<ts>",
+        "pending": null,
+        "artifacts": {
+          "research": {
+            "commentId": 101
+          },
+          "prototypeRounds": [
+            {
+              "round": 1,
+              "commentId": 102,
+              "options": [
+                {
+                  "id": "a",
+                  "title": "Inline",
+                  "pitch": "Quiet option",
+                  "path": "o/r/7/round-1/a/index.html",
+                  "repoPath": "o/r/7/round-1/a/index.html",
+                  "sha": "4796e4e015cf8441cb705edfbfe31517458dea9de12a668c380fa4414afc0d73"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "labels": [
+        "agent-loop",
+        "stage:prototype",
+        "gate:signoff",
+        "proto-round:1"
+      ]
+    },
+    {
+      "step": "intent:approve",
+      "state": {
+        "version": 2,
+        "txn": 4,
+        "reqId": "golden-1",
+        "owner": "o",
+        "repo": "r",
+        "issue": 7,
+        "title": "Build a copy button",
+        "baseBranch": "main",
+        "stage": "planning",
+        "gate": null,
+        "round": 1,
+        "implRound": 0,
+        "status": "working",
+        "statusText": "Drafting clarifying questions…",
+        "updatedAt": "<ts>",
+        "pending": {
+          "opId": "iss7/planning/t4",
+          "kind": "plan-questions",
+          "inputCommentIds": [
+            101,
+            102,
+            103
+          ],
+          "mode": "questions",
+          "attempt": 1,
+          "submissionTokenHash": "<token-hash>"
+        },
+        "artifacts": {
+          "research": {
+            "commentId": 101
+          },
+          "prototypeRounds": [
+            {
+              "round": 1,
+              "commentId": 102,
+              "options": [
+                {
+                  "id": "a",
+                  "title": "Inline",
+                  "pitch": "Quiet option",
+                  "path": "o/r/7/round-1/a/index.html",
+                  "repoPath": "o/r/7/round-1/a/index.html",
+                  "sha": "4796e4e015cf8441cb705edfbfe31517458dea9de12a668c380fa4414afc0d73"
+                }
+              ]
+            }
+          ],
+          "inputs": {
+            "approve": 103
+          }
+        },
+        "approved": "a"
+      },
+      "labels": [
+        "agent-loop",
+        "stage:planning",
+        "proto-round:1"
+      ]
+    },
+    {
+      "step": "submit:plan-questions",
+      "state": {
+        "version": 2,
+        "txn": 5,
+        "reqId": "golden-1",
+        "owner": "o",
+        "repo": "r",
+        "issue": 7,
+        "title": "Build a copy button",
+        "baseBranch": "main",
+        "stage": "planning",
+        "gate": "questionnaire",
+        "round": 1,
+        "implRound": 0,
+        "status": "waiting",
+        "statusText": "Waiting for your answers.",
+        "updatedAt": "<ts>",
+        "pending": null,
+        "artifacts": {
+          "research": {
+            "commentId": 101
+          },
+          "prototypeRounds": [
+            {
+              "round": 1,
+              "commentId": 102,
+              "options": [
+                {
+                  "id": "a",
+                  "title": "Inline",
+                  "pitch": "Quiet option",
+                  "path": "o/r/7/round-1/a/index.html",
+                  "repoPath": "o/r/7/round-1/a/index.html",
+                  "sha": "4796e4e015cf8441cb705edfbfe31517458dea9de12a668c380fa4414afc0d73"
+                }
+              ]
+            }
+          ],
+          "inputs": {
+            "approve": 103
+          },
+          "questionnaire": {
+            "commentId": 104
+          }
+        },
+        "approved": "a"
+      },
+      "labels": [
+        "agent-loop",
+        "stage:planning",
+        "gate:questionnaire",
+        "proto-round:1"
+      ]
+    },
+    {
+      "step": "intent:answers",
+      "state": {
+        "version": 2,
+        "txn": 6,
+        "reqId": "golden-1",
+        "owner": "o",
+        "repo": "r",
+        "issue": 7,
+        "title": "Build a copy button",
+        "baseBranch": "main",
+        "stage": "planning-finalize",
+        "gate": null,
+        "round": 1,
+        "implRound": 0,
+        "status": "working",
+        "statusText": "Drafting the plan…",
+        "updatedAt": "<ts>",
+        "pending": {
+          "opId": "iss7/planning-finalize/t6",
+          "kind": "plan",
+          "inputCommentIds": [
+            101,
+            102,
+            103,
+            104,
+            105
+          ],
+          "mode": "finalize",
+          "attempt": 1,
+          "submissionTokenHash": "<token-hash>"
+        },
+        "artifacts": {
+          "research": {
+            "commentId": 101
+          },
+          "prototypeRounds": [
+            {
+              "round": 1,
+              "commentId": 102,
+              "options": [
+                {
+                  "id": "a",
+                  "title": "Inline",
+                  "pitch": "Quiet option",
+                  "path": "o/r/7/round-1/a/index.html",
+                  "repoPath": "o/r/7/round-1/a/index.html",
+                  "sha": "4796e4e015cf8441cb705edfbfe31517458dea9de12a668c380fa4414afc0d73"
+                }
+              ]
+            }
+          ],
+          "inputs": {
+            "approve": 103
+          },
+          "questionnaire": {
+            "commentId": 104
+          },
+          "answers": {
+            "commentId": 105
+          }
+        },
+        "approved": "a"
+      },
+      "labels": [
+        "agent-loop",
+        "stage:planning-finalize",
+        "proto-round:1"
+      ]
+    },
+    {
+      "step": "submit:plan",
+      "state": {
+        "version": 2,
+        "txn": 8,
+        "reqId": "golden-1",
+        "owner": "o",
+        "repo": "r",
+        "issue": 7,
+        "title": "Build a copy button",
+        "baseBranch": "main",
+        "stage": "planning",
+        "gate": "plan-review",
+        "round": 1,
+        "implRound": 0,
+        "status": "waiting",
+        "statusText": "Waiting for your plan approval.",
+        "updatedAt": "<ts>",
+        "pending": null,
+        "artifacts": {
+          "research": {
+            "commentId": 101
+          },
+          "prototypeRounds": [
+            {
+              "round": 1,
+              "commentId": 102,
+              "options": [
+                {
+                  "id": "a",
+                  "title": "Inline",
+                  "pitch": "Quiet option",
+                  "path": "o/r/7/round-1/a/index.html",
+                  "repoPath": "o/r/7/round-1/a/index.html",
+                  "sha": "4796e4e015cf8441cb705edfbfe31517458dea9de12a668c380fa4414afc0d73"
+                }
+              ]
+            }
+          ],
+          "inputs": {
+            "approve": 103
+          },
+          "questionnaire": {
+            "commentId": 104
+          },
+          "answers": {
+            "commentId": 105
+          },
+          "plan": {
+            "draftCommentId": 106,
+            "approved": null,
+            "clauses": [
+              {
+                "id": "c1",
+                "hash": "sha256:b2ef5a9c5cfa5d0dcccb8473caed26804fc9e953fd5a65c7074bc140e69c3e34",
+                "status": "open",
+                "instruction": null,
+                "quotes": []
+              }
+            ],
+            "commentId": 108,
+            "rev": 1
+          }
+        },
+        "approved": "a",
+        "panel": {
+          "rev": 1,
+          "evidenceCommentId": 107,
+          "models": [],
+          "synthesisModel": null,
+          "failed": null,
+          "failedCode": null,
+          "skipped": {
+            "reason": "factories-unavailable"
+          },
+          "disagreements": 0,
+          "quotes": {},
+          "reviews": [],
+          "usedIds": [
+            "c1"
+          ]
+        }
+      },
+      "labels": [
+        "agent-loop",
+        "stage:planning",
+        "gate:plan-review",
+        "proto-round:1"
+      ]
+    },
+    {
+      "step": "intent:plan-ok",
+      "state": {
+        "version": 2,
+        "txn": 9,
+        "reqId": "golden-1",
+        "owner": "o",
+        "repo": "r",
+        "issue": 7,
+        "title": "Build a copy button",
+        "baseBranch": "main",
+        "stage": "implementing",
+        "gate": null,
+        "round": 1,
+        "implRound": 1,
+        "status": "working",
+        "statusText": "Building the change…",
+        "updatedAt": "<ts>",
+        "pending": {
+          "opId": "iss7/implementing/r1",
+          "kind": "implement",
+          "inputCommentIds": [
+            108,
+            109
+          ],
+          "round": 1,
+          "attempt": 1,
+          "submissionTokenHash": "<token-hash>"
+        },
+        "artifacts": {
+          "research": {
+            "commentId": 101
+          },
+          "prototypeRounds": [
+            {
+              "round": 1,
+              "commentId": 102,
+              "options": [
+                {
+                  "id": "a",
+                  "title": "Inline",
+                  "pitch": "Quiet option",
+                  "path": "o/r/7/round-1/a/index.html",
+                  "repoPath": "o/r/7/round-1/a/index.html",
+                  "sha": "4796e4e015cf8441cb705edfbfe31517458dea9de12a668c380fa4414afc0d73"
+                }
+              ]
+            }
+          ],
+          "inputs": {
+            "approve": 103
+          },
+          "questionnaire": {
+            "commentId": 104
+          },
+          "answers": {
+            "commentId": 105
+          },
+          "plan": {
+            "draftCommentId": 106,
+            "approved": true,
+            "clauses": [
+              {
+                "id": "c1",
+                "hash": "sha256:b2ef5a9c5cfa5d0dcccb8473caed26804fc9e953fd5a65c7074bc140e69c3e34",
+                "status": "open",
+                "instruction": null,
+                "quotes": []
+              }
+            ],
+            "commentId": 108,
+            "rev": 1
+          }
+        },
+        "approved": "a",
+        "panel": {
+          "rev": 1,
+          "evidenceCommentId": 107,
+          "models": [],
+          "synthesisModel": null,
+          "failed": null,
+          "failedCode": null,
+          "skipped": {
+            "reason": "factories-unavailable"
+          },
+          "disagreements": 0,
+          "quotes": {},
+          "reviews": [],
+          "usedIds": [
+            "c1"
+          ]
+        }
+      },
+      "labels": [
+        "agent-loop",
+        "stage:implementing",
+        "proto-round:1",
+        "impl-round:1"
+      ]
+    },
+    {
+      "step": "submit:implement",
+      "state": {
+        "version": 2,
+        "txn": 10,
+        "reqId": "golden-1",
+        "owner": "o",
+        "repo": "r",
+        "issue": 7,
+        "title": "Build a copy button",
+        "baseBranch": "main",
+        "stage": "implementing",
+        "gate": "feedback",
+        "round": 1,
+        "implRound": 1,
+        "status": "waiting",
+        "statusText": "Waiting for your review of the PR.",
+        "updatedAt": "<ts>",
+        "pending": null,
+        "artifacts": {
+          "research": {
+            "commentId": 101
+          },
+          "prototypeRounds": [
+            {
+              "round": 1,
+              "commentId": 102,
+              "options": [
+                {
+                  "id": "a",
+                  "title": "Inline",
+                  "pitch": "Quiet option",
+                  "path": "o/r/7/round-1/a/index.html",
+                  "repoPath": "o/r/7/round-1/a/index.html",
+                  "sha": "4796e4e015cf8441cb705edfbfe31517458dea9de12a668c380fa4414afc0d73"
+                }
+              ]
+            }
+          ],
+          "inputs": {
+            "approve": 103
+          },
+          "questionnaire": {
+            "commentId": 104
+          },
+          "answers": {
+            "commentId": 105
+          },
+          "plan": {
+            "draftCommentId": 106,
+            "approved": true,
+            "clauses": [
+              {
+                "id": "c1",
+                "hash": "sha256:b2ef5a9c5cfa5d0dcccb8473caed26804fc9e953fd5a65c7074bc140e69c3e34",
+                "status": "open",
+                "instruction": null,
+                "quotes": []
+              }
+            ],
+            "commentId": 108,
+            "rev": 1
+          },
+          "impl": {
+            "commentId": 110,
+            "prNumber": 1,
+            "prUrl": "https://github.com/o/r/pull/1",
+            "branch": "agent-loop/issue-7",
+            "base": "main",
+            "headSha": "sha-impl-1",
+            "round": 1,
+            "preview": {
+              "kind": "none",
+              "notes": "Diff only"
+            }
+          }
+        },
+        "approved": "a",
+        "panel": {
+          "rev": 1,
+          "evidenceCommentId": 107,
+          "models": [],
+          "synthesisModel": null,
+          "failed": null,
+          "failedCode": null,
+          "skipped": {
+            "reason": "factories-unavailable"
+          },
+          "disagreements": 0,
+          "quotes": {},
+          "reviews": [],
+          "usedIds": [
+            "c1"
+          ]
+        }
+      },
+      "labels": [
+        "agent-loop",
+        "stage:implementing",
+        "gate:feedback",
+        "proto-round:1",
+        "impl-round:1"
+      ]
+    },
+    {
+      "step": "intent:revise",
+      "state": {
+        "version": 2,
+        "txn": 11,
+        "reqId": "golden-1",
+        "owner": "o",
+        "repo": "r",
+        "issue": 7,
+        "title": "Build a copy button",
+        "baseBranch": "main",
+        "stage": "implementing",
+        "gate": null,
+        "round": 1,
+        "implRound": 2,
+        "status": "working",
+        "statusText": "Revising PR #1…",
+        "updatedAt": "<ts>",
+        "pending": {
+          "opId": "iss7/implementing/r2",
+          "kind": "implement",
+          "inputCommentIds": [
+            108,
+            111
+          ],
+          "round": 2,
+          "attempt": 1,
+          "submissionTokenHash": "<token-hash>"
+        },
+        "artifacts": {
+          "research": {
+            "commentId": 101
+          },
+          "prototypeRounds": [
+            {
+              "round": 1,
+              "commentId": 102,
+              "options": [
+                {
+                  "id": "a",
+                  "title": "Inline",
+                  "pitch": "Quiet option",
+                  "path": "o/r/7/round-1/a/index.html",
+                  "repoPath": "o/r/7/round-1/a/index.html",
+                  "sha": "4796e4e015cf8441cb705edfbfe31517458dea9de12a668c380fa4414afc0d73"
+                }
+              ]
+            }
+          ],
+          "inputs": {
+            "approve": 103
+          },
+          "questionnaire": {
+            "commentId": 104
+          },
+          "answers": {
+            "commentId": 105
+          },
+          "plan": {
+            "draftCommentId": 106,
+            "approved": true,
+            "clauses": [
+              {
+                "id": "c1",
+                "hash": "sha256:b2ef5a9c5cfa5d0dcccb8473caed26804fc9e953fd5a65c7074bc140e69c3e34",
+                "status": "open",
+                "instruction": null,
+                "quotes": []
+              }
+            ],
+            "commentId": 108,
+            "rev": 1
+          },
+          "impl": {
+            "commentId": 110,
+            "prNumber": 1,
+            "prUrl": "https://github.com/o/r/pull/1",
+            "branch": "agent-loop/issue-7",
+            "base": "main",
+            "headSha": "sha-impl-1",
+            "round": 1,
+            "preview": {
+              "kind": "none",
+              "notes": "Diff only"
+            }
+          }
+        },
+        "approved": "a",
+        "panel": {
+          "rev": 1,
+          "evidenceCommentId": 107,
+          "models": [],
+          "synthesisModel": null,
+          "failed": null,
+          "failedCode": null,
+          "skipped": {
+            "reason": "factories-unavailable"
+          },
+          "disagreements": 0,
+          "quotes": {},
+          "reviews": [],
+          "usedIds": [
+            "c1"
+          ]
+        }
+      },
+      "labels": [
+        "agent-loop",
+        "stage:implementing",
+        "proto-round:1",
+        "impl-round:2"
+      ]
+    },
+    {
+      "step": "submit:implement-2",
+      "state": {
+        "version": 2,
+        "txn": 12,
+        "reqId": "golden-1",
+        "owner": "o",
+        "repo": "r",
+        "issue": 7,
+        "title": "Build a copy button",
+        "baseBranch": "main",
+        "stage": "implementing",
+        "gate": "feedback",
+        "round": 1,
+        "implRound": 2,
+        "status": "waiting",
+        "statusText": "Waiting for your review of the PR.",
+        "updatedAt": "<ts>",
+        "pending": null,
+        "artifacts": {
+          "research": {
+            "commentId": 101
+          },
+          "prototypeRounds": [
+            {
+              "round": 1,
+              "commentId": 102,
+              "options": [
+                {
+                  "id": "a",
+                  "title": "Inline",
+                  "pitch": "Quiet option",
+                  "path": "o/r/7/round-1/a/index.html",
+                  "repoPath": "o/r/7/round-1/a/index.html",
+                  "sha": "4796e4e015cf8441cb705edfbfe31517458dea9de12a668c380fa4414afc0d73"
+                }
+              ]
+            }
+          ],
+          "inputs": {
+            "approve": 103
+          },
+          "questionnaire": {
+            "commentId": 104
+          },
+          "answers": {
+            "commentId": 105
+          },
+          "plan": {
+            "draftCommentId": 106,
+            "approved": true,
+            "clauses": [
+              {
+                "id": "c1",
+                "hash": "sha256:b2ef5a9c5cfa5d0dcccb8473caed26804fc9e953fd5a65c7074bc140e69c3e34",
+                "status": "open",
+                "instruction": null,
+                "quotes": []
+              }
+            ],
+            "commentId": 108,
+            "rev": 1
+          },
+          "impl": {
+            "commentId": 112,
+            "prNumber": 1,
+            "prUrl": "https://github.com/o/r/pull/1",
+            "branch": "agent-loop/issue-7",
+            "base": "main",
+            "headSha": "sha-impl-2",
+            "round": 2,
+            "preview": {
+              "kind": "none"
+            }
+          }
+        },
+        "approved": "a",
+        "panel": {
+          "rev": 1,
+          "evidenceCommentId": 107,
+          "models": [],
+          "synthesisModel": null,
+          "failed": null,
+          "failedCode": null,
+          "skipped": {
+            "reason": "factories-unavailable"
+          },
+          "disagreements": 0,
+          "quotes": {},
+          "reviews": [],
+          "usedIds": [
+            "c1"
+          ]
+        }
+      },
+      "labels": [
+        "agent-loop",
+        "stage:implementing",
+        "gate:feedback",
+        "proto-round:1",
+        "impl-round:2"
+      ]
+    },
+    {
+      "step": "intent:ship",
+      "state": {
+        "version": 2,
+        "txn": 13,
+        "reqId": "golden-1",
+        "owner": "o",
+        "repo": "r",
+        "issue": 7,
+        "title": "Build a copy button",
+        "baseBranch": "main",
+        "stage": "finalizing",
+        "gate": null,
+        "round": 1,
+        "implRound": 2,
+        "status": "working",
+        "statusText": "Finalizing the PR…",
+        "updatedAt": "<ts>",
+        "pending": {
+          "opId": "iss7/finalizing/t13",
+          "kind": "finalize",
+          "inputCommentIds": [
+            108,
+            113
+          ],
+          "attempt": 1,
+          "reviewedHeadSha": "sha-impl-2",
+          "submissionTokenHash": "<token-hash>"
+        },
+        "artifacts": {
+          "research": {
+            "commentId": 101
+          },
+          "prototypeRounds": [
+            {
+              "round": 1,
+              "commentId": 102,
+              "options": [
+                {
+                  "id": "a",
+                  "title": "Inline",
+                  "pitch": "Quiet option",
+                  "path": "o/r/7/round-1/a/index.html",
+                  "repoPath": "o/r/7/round-1/a/index.html",
+                  "sha": "4796e4e015cf8441cb705edfbfe31517458dea9de12a668c380fa4414afc0d73"
+                }
+              ]
+            }
+          ],
+          "inputs": {
+            "approve": 103
+          },
+          "questionnaire": {
+            "commentId": 104
+          },
+          "answers": {
+            "commentId": 105
+          },
+          "plan": {
+            "draftCommentId": 106,
+            "approved": true,
+            "clauses": [
+              {
+                "id": "c1",
+                "hash": "sha256:b2ef5a9c5cfa5d0dcccb8473caed26804fc9e953fd5a65c7074bc140e69c3e34",
+                "status": "open",
+                "instruction": null,
+                "quotes": []
+              }
+            ],
+            "commentId": 108,
+            "rev": 1
+          },
+          "impl": {
+            "commentId": 112,
+            "prNumber": 1,
+            "prUrl": "https://github.com/o/r/pull/1",
+            "branch": "agent-loop/issue-7",
+            "base": "main",
+            "headSha": "sha-impl-2",
+            "round": 2,
+            "preview": {
+              "kind": "none"
+            }
+          }
+        },
+        "approved": "a",
+        "panel": {
+          "rev": 1,
+          "evidenceCommentId": 107,
+          "models": [],
+          "synthesisModel": null,
+          "failed": null,
+          "failedCode": null,
+          "skipped": {
+            "reason": "factories-unavailable"
+          },
+          "disagreements": 0,
+          "quotes": {},
+          "reviews": [],
+          "usedIds": [
+            "c1"
+          ]
+        }
+      },
+      "labels": [
+        "agent-loop",
+        "stage:finalizing",
+        "proto-round:1",
+        "impl-round:2"
+      ]
+    },
+    {
+      "step": "submit:finalize",
+      "state": {
+        "version": 2,
+        "txn": 14,
+        "reqId": "golden-1",
+        "owner": "o",
+        "repo": "r",
+        "issue": 7,
+        "title": "Build a copy button",
+        "baseBranch": "main",
+        "stage": "done",
+        "gate": null,
+        "round": 1,
+        "implRound": 2,
+        "status": "done",
+        "statusText": "Done — PR #1 is ready to merge.",
+        "updatedAt": "<ts>",
+        "pending": null,
+        "artifacts": {
+          "research": {
+            "commentId": 101
+          },
+          "prototypeRounds": [
+            {
+              "round": 1,
+              "commentId": 102,
+              "options": [
+                {
+                  "id": "a",
+                  "title": "Inline",
+                  "pitch": "Quiet option",
+                  "path": "o/r/7/round-1/a/index.html",
+                  "repoPath": "o/r/7/round-1/a/index.html",
+                  "sha": "4796e4e015cf8441cb705edfbfe31517458dea9de12a668c380fa4414afc0d73"
+                }
+              ]
+            }
+          ],
+          "inputs": {
+            "approve": 103
+          },
+          "questionnaire": {
+            "commentId": 104
+          },
+          "answers": {
+            "commentId": 105
+          },
+          "plan": {
+            "draftCommentId": 106,
+            "approved": true,
+            "clauses": [
+              {
+                "id": "c1",
+                "hash": "sha256:b2ef5a9c5cfa5d0dcccb8473caed26804fc9e953fd5a65c7074bc140e69c3e34",
+                "status": "open",
+                "instruction": null,
+                "quotes": []
+              }
+            ],
+            "commentId": 108,
+            "rev": 1
+          },
+          "impl": {
+            "commentId": 112,
+            "prNumber": 1,
+            "prUrl": "https://github.com/o/r/pull/1",
+            "branch": "agent-loop/issue-7",
+            "base": "main",
+            "headSha": "sha-impl-2",
+            "round": 2,
+            "preview": {
+              "kind": "none"
+            }
+          },
+          "finalized": {
+            "commentId": 114
+          }
+        },
+        "approved": "a",
+        "panel": {
+          "rev": 1,
+          "evidenceCommentId": 107,
+          "models": [],
+          "synthesisModel": null,
+          "failed": null,
+          "failedCode": null,
+          "skipped": {
+            "reason": "factories-unavailable"
+          },
+          "disagreements": 0,
+          "quotes": {},
+          "reviews": [],
+          "usedIds": [
+            "c1"
+          ]
+        }
+      },
+      "labels": [
+        "agent-loop",
+        "stage:done",
+        "proto-round:1",
+        "impl-round:2"
+      ]
+    }
+  ]
+}

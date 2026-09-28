@@ -66,6 +66,12 @@ test("converts the displayed operand to a fraction with percent", () => {
   assert.equal(calculator.display, "199.75");
 });
 
+test("makes percent the second operand after an operator", () => {
+  const calculator = new Calculator();
+  press(calculator, "5", "+", "%", "=");
+  assert.equal(calculator.display, "5.05");
+});
+
 test("does not reuse an operand when equals is pressed without a second value", () => {
   const calculator = new Calculator();
   press(calculator, "7", "+", "=");

@@ -1,5 +1,5 @@
 :root {
-  color: #f8f7f2;
+  color: #182117;
   background: #dde1e0;
   font-family: Arial, Helvetica, sans-serif;
 }
@@ -23,6 +23,7 @@ body {
   max-width: 25rem;
   padding: 1.4rem;
   width: 100%;
+  color: #f8f7f2;
 }
 
 header {

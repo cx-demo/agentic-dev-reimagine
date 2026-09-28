@@ -59,6 +59,7 @@ export class Calculator {
     const value = Number(this.display);
     if (!Number.isFinite(value)) return this.setError();
     this.display = formatNumber(value / 100);
+    this.waitingForSecond = false;
     this.justEvaluated = false;
   }
 
@@ -104,7 +105,7 @@ function formatNumber(value) {
 const keyActions = {
   "+": ["operator", "+"], "-": ["operator", "-"], ".": ["decimal"],
   "%": ["percent"], Enter: ["equals"], "=": ["equals"], Escape: ["clear"], Backspace: ["backspace"],
-  c: ["clear"], C: ["clear"],
+  c: ["clear"],
 };
 
 if (typeof document !== "undefined") {
@@ -135,7 +136,9 @@ if (typeof document !== "undefined") {
   });
 
   document.addEventListener("keydown", (event) => {
-    const action = /^[0-9]$/.test(event.key) ? ["digit", event.key] : keyActions[event.key];
+    const action = /^[0-9]$/.test(event.key)
+      ? ["digit", event.key]
+      : keyActions[event.key] ?? keyActions[event.key.toLowerCase()];
     if (action) {
       event.preventDefault();
       perform(...action);

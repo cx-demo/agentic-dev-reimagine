@@ -49,7 +49,10 @@ export class Calculator {
   }
 
   backspace() {
-    if (this.error) return this.clear();
+    if (this.error) {
+      this.clear();
+      return;
+    }
     if (this.waitingForSecond || this.justEvaluated) return;
     this.display = this.display.length > 1 ? this.display.slice(0, -1) : "0";
     if (this.display === "-") this.display = "0";
@@ -58,7 +61,11 @@ export class Calculator {
   percent() {
     if (this.error) return;
     const value = Number(this.display);
-    if (!Number.isFinite(value)) return this.setError();
+    if (!Number.isFinite(value)) {
+      this.setError();
+      return;
+    }
+    // Before second entry, the visible first operand becomes the percentage operand.
     this.display = formatNumber(value / 100);
     this.waitingForSecond = false;
     this.justEvaluated = false;
@@ -68,7 +75,10 @@ export class Calculator {
     if (this.error) return;
     if (this.operator && !this.waitingForSecond) return;
     const value = Number(this.display);
-    if (!Number.isFinite(value)) return this.setError();
+    if (!Number.isFinite(value)) {
+      this.setError();
+      return;
+    }
     this.firstOperand = value;
     this.operator = operator;
     this.waitingForSecond = true;
@@ -79,11 +89,17 @@ export class Calculator {
   equals() {
     if (this.error || !this.operator || this.waitingForSecond) return;
     const secondOperand = Number(this.display);
-    if (!Number.isFinite(secondOperand)) return this.setError();
+    if (!Number.isFinite(secondOperand)) {
+      this.setError();
+      return;
+    }
     const result = this.operator === "+"
       ? this.firstOperand + secondOperand
       : this.firstOperand - secondOperand;
-    if (!Number.isFinite(result)) return this.setError();
+    if (!Number.isFinite(result)) {
+      this.setError();
+      return;
+    }
     this.expression = `${formatNumber(this.firstOperand)} ${this.operator} ${formatNumber(secondOperand)} =`;
     this.display = formatNumber(result);
     this.operator = null;
@@ -140,6 +156,7 @@ if (typeof document !== "undefined") {
   });
 
   document.addEventListener("keydown", (event) => {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
     const action = /^[0-9]$/.test(event.key)
       ? ["digit", event.key]
       : keyActions[event.key] ?? keyActions[event.key.toLowerCase()];

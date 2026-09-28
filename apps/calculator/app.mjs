@@ -65,7 +65,7 @@ export class Calculator {
       this.setError();
       return;
     }
-    // Before second entry, the visible first operand becomes the percentage operand.
+    // A pending second operand is seeded from the displayed first operand divided by 100.
     this.display = formatNumber(value / 100);
     this.waitingForSecond = false;
     this.justEvaluated = false;

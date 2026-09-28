@@ -84,6 +84,11 @@ function formatNumber(value) {
   return Object.is(value, -0) ? "0" : String(value);
 }
 
+const keyActions = {
+  "+": ["operator", "+"], "-": ["operator", "-"], ".": ["decimal"],
+  "%": ["percent"], Enter: ["equals"], "=": ["equals"], Escape: ["clear"], c: ["clear"], C: ["clear"],
+};
+
 if (typeof document !== "undefined") {
   const calculator = new Calculator();
   const result = document.querySelector("#result");
@@ -111,10 +116,6 @@ if (typeof document !== "undefined") {
   });
 
   document.addEventListener("keydown", (event) => {
-    const keyActions = {
-      "+": ["operator", "+"], "-": ["operator", "-"], ".": ["decimal"],
-      "%": ["percent"], Enter: ["equals"], "=": ["equals"], Escape: ["clear"], c: ["clear"], C: ["clear"],
-    };
     const action = /^[0-9]$/.test(event.key) ? ["digit", event.key] : keyActions[event.key];
     if (action) {
       event.preventDefault();

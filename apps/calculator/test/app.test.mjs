@@ -46,6 +46,13 @@ test("does not reuse an operand when equals is pressed without a second value", 
   assert.equal(calculator.expression, "7 +");
 });
 
+test("starts a new one-pair calculation from a result when an operator is selected", () => {
+  const calculator = new Calculator();
+  press(calculator, "5", "+", "5", "=", "-", "3", "=");
+  assert.equal(calculator.display, "7");
+  assert.equal(calculator.expression, "10 - 3 =");
+});
+
 test("converts a result to a percentage and keeps errors recoverable", () => {
   const calculator = new Calculator();
   press(calculator, "5", "+", "5", "=", "%");
